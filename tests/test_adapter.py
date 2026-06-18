@@ -806,3 +806,36 @@ async def test_confirm_forward_email_wrapper_fails_for_expired_token(env, monkey
     result = await confirm_forward_email_wrapper(confirmation_token=token)
 
     assert result["error"] == "INVALID_OR_EXPIRED_TOKEN"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_polling_respects_poll_top_client_side(env, state_path):
+    _mock_token()
+    env.setenv("M365_EMAIL_STATE_PATH", str(state_path))
+    env.setenv("M365_POLL_TOP", "3")
+
+    from adapter import M365EmailAdapter
+
+    adapter = M365EmailAdapter()
+    tracker_calls: list[dict] = []
+    async def tracker(event: dict) -> None:
+        tracker_calls.append(event)
+    adapter.handle_message = tracker  # type: ignore[method-assign]
+
+    future_ts = (datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat()
+    messages = [
+        _make_message(f"msg-{i}", "trusted@example.com", "Trusted",
+                      subject=f"Email {i}", received=future_ts)
+        for i in range(5)
+    ]
+    inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=3")).mock(
+        return_value=httpx.Response(200, json={"value": messages})
+    )
+
+    await adapter.connect()
+    await asyncio.sleep(0.3)
+    await adapter.disconnect()
+
+    assert inbox_route.called
+    assert len(tracker_calls) == 3
