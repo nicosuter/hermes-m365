@@ -38,6 +38,9 @@ class MockBasePlatformAdapter:
             "user_name": user_name,
         }
 
+    def _set_fatal_error(self, code, message, retryable=False):
+        pass
+
     async def handle_message(self, event):
         pass
 

@@ -96,9 +96,10 @@ class TestAdapterRegistration:
         assert ctx.platform_kwargs is not None
         required = ctx.platform_kwargs["required_env"]
         assert isinstance(required, list)
-        assert "M365_MAIL_CLIENT_ID" in required
-        assert "M365_MAIL_CLIENT_SECRET" in required
-        assert "M365_MAIL_TENANT_ID" in required
+        names = [r["name"] if isinstance(r, dict) else r for r in required]
+        assert "M365_MAIL_CLIENT_ID" in names
+        assert "M365_MAIL_CLIENT_SECRET" in names
+        assert "M365_MAIL_TENANT_ID" in names
 
 
 # ── Validation tests ───────────────────────────────────────────────────────

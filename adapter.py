@@ -76,6 +76,10 @@ class M365EmailAdapter(BasePlatformAdapter):
         self._client: GraphClient | None = None
         self._poll_interval: float = 30.0
 
+    @property
+    def name(self) -> str:
+        return "M365 Email"
+
     # -- Hermes lifecycle hooks ------------------------------------------------
 
     async def connect(self) -> bool:
@@ -87,6 +91,7 @@ class M365EmailAdapter(BasePlatformAdapter):
             self._mail_config = MailConfig.from_env()
         except MailConfigError as exc:
             logger.error("Failed to load MailConfig: %s", exc)
+            self._set_fatal_error("config_missing", str(exc), retryable=False)
             return False
 
         poll_interval_raw = os.environ.get("M365_POLL_INTERVAL_SECONDS")
@@ -339,6 +344,75 @@ def validate_config(config: dict[str, object] | None = None) -> bool:
     return len(missing) == 0
 
 
+def interactive_setup() -> None:
+    """Interactive ``hermes gateway setup`` flow for the M365 email platform.
+
+    Lazy-imports ``hermes_cli.setup`` helpers so the plugin stays importable
+    in non-CLI contexts (gateway runtime, tests).
+    """
+    from hermes_cli.setup import (
+        prompt,
+        prompt_yes_no,
+        save_env_value,
+        get_env_value,
+        print_header,
+        print_info,
+        print_warning,
+        print_success,
+    )
+
+    print_header("M365 Email")
+
+    existing_mailbox = get_env_value("M365_MAILBOX_USER")
+    if existing_mailbox:
+        print_info(f"M365 Email: already configured (mailbox: {existing_mailbox})")
+        if not prompt_yes_no("Reconfigure M365 Email?", False):
+            return
+
+    print_info("Connect Hermes to a Microsoft 365 mailbox via Microsoft Graph API.")
+    print_info("   Requires an Azure AD app registration with Mail.Send / Mail.Read permissions.")
+    print()
+
+    client_id = prompt("Azure AD Client ID", default=get_env_value("M365_MAIL_CLIENT_ID") or "")
+    if not client_id:
+        print_warning("Client ID is required — skipping M365 Email setup")
+        return
+    save_env_value("M365_MAIL_CLIENT_ID", client_id.strip())
+
+    client_secret = prompt("Azure AD Client Secret", password=True, default=get_env_value("M365_MAIL_CLIENT_SECRET") or "")
+    if not client_secret:
+        print_warning("Client Secret is required — skipping M365 Email setup")
+        return
+    save_env_value("M365_MAIL_CLIENT_SECRET", client_secret.strip())
+
+    tenant_id = prompt("Azure AD Tenant ID", default=get_env_value("M365_MAIL_TENANT_ID") or "")
+    if not tenant_id:
+        print_warning("Tenant ID is required — skipping M365 Email setup")
+        return
+    save_env_value("M365_MAIL_TENANT_ID", tenant_id.strip())
+
+    mailbox = prompt(
+        "Mailbox user (e.g. user@contoso.com)",
+        default=get_env_value("M365_MAILBOX_USER") or "",
+    )
+    if not mailbox:
+        print_warning("Mailbox user is required — skipping M365 Email setup")
+        return
+    save_env_value("M365_MAILBOX_USER", mailbox.strip())
+
+    allowed = prompt(
+        "Allowed sender addresses (comma-separated, leave blank to allow all)",
+        default=get_env_value("EMAIL_ALLOWED_USERS") or "",
+    )
+    if allowed:
+        save_env_value("EMAIL_ALLOWED_USERS", allowed.strip())
+
+    print()
+    print_success("M365 Email configured.")
+    print_info("   Restart the gateway to apply the new settings.")
+    print()
+
+
 # ── Tool Wrappers ──────────────────────────────────────────────────────────
 
 async def _tool_call(func: Callable[..., Any], **kwargs: Any) -> Any:
@@ -466,13 +540,20 @@ def register(ctx):
         check_fn=check_connected,
         validate_config=validate_config,
         is_connected=is_connected_fn,
-        required_env=list(REQUIRED_ENV_VARS),
+        required_env=[
+            {"name": "M365_MAIL_CLIENT_ID", "description": "Azure AD application client ID", "prompt": "Azure AD Client ID", "password": False},
+            {"name": "M365_MAIL_CLIENT_SECRET", "description": "Azure AD application client secret", "prompt": "Azure AD Client Secret", "password": True},
+            {"name": "M365_MAIL_TENANT_ID", "description": "Azure AD tenant ID", "prompt": "Azure AD Tenant ID", "password": False},
+        ],
         env_enablement_fn=env_enablement,
         allowed_users_env="EMAIL_ALLOWED_USERS",
         max_message_length=32000,
         platform_hint="Send email to any address. Chat ID format: m365:recipient@example.com",
         emoji="📧",
         allow_update_command=True,
+        pii_safe=False,
+        install_hint="pip install m365-email-hermes-plugin",
+        setup_fn=interactive_setup,
     )
     ctx.register_tool("list_mail", list_mail_wrapper, "List recent emails in inbox")
     ctx.register_tool("get_email", get_email_wrapper, "Get email by ID")
