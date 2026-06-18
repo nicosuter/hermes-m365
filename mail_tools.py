@@ -23,7 +23,7 @@ async def list_mail(
     unreadOnly: bool = True,
     top: int = 25,
     filter: str | None = None,
-) -> list[dict[str, object]]:
+) -> dict[str, object]:
     _ = config
     query_parts = [
         f"$orderby={quote_plus('receivedDateTime desc')}",
@@ -42,7 +42,8 @@ async def list_mail(
     payload = cast(dict[str, object], response.json())
     raw_value = payload.get("value", [])
     value: list[object] = cast(list[object], raw_value) if isinstance(raw_value, list) else []
-    return [_message_summary(cast(dict[str, object], item)) for item in value if isinstance(item, dict)]
+    summaries = [_message_summary(cast(dict[str, object], item)) for item in value if isinstance(item, dict)]
+    return {"emails": summaries[:top]}
 
 
 async def get_email(*, config: MailConfig, client: GraphClient, email_id: str) -> dict[str, object]:

@@ -81,15 +81,17 @@ async def test_list_mail_orders_filters_and_respects_top(config: MailConfig):
         )
 
     assert first_route.called
-    assert result == [
-        {
-            "id": "message-1",
-            "subject": "Newest",
-            "from": {"name": "Stranger", "address": "stranger@example.com"},
-            "receivedDateTime": "2026-06-17T10:00:00Z",
-            "hasAttachments": True,
-        },
-    ]
+    assert result == {
+        "emails": [
+            {
+                "id": "message-1",
+                "subject": "Newest",
+                "from": {"name": "Stranger", "address": "stranger@example.com"},
+                "receivedDateTime": "2026-06-17T10:00:00Z",
+                "hasAttachments": True,
+            },
+        ],
+    }
 
 
 @pytest.mark.asyncio
@@ -122,15 +124,17 @@ async def test_list_mail_unread_only_adds_isRead_filter(config: MailConfig):
         result = await list_mail(config=config, client=client, unreadOnly=True)
 
     assert first_route.called
-    assert result == [
-        {
-            "id": "message-unread",
-            "subject": "Unread Email",
-            "from": {"name": "Sender", "address": "sender@example.com"},
-            "receivedDateTime": "2026-06-17T12:00:00Z",
-            "hasAttachments": False,
-        }
-    ]
+    assert result == {
+        "emails": [
+            {
+                "id": "message-unread",
+                "subject": "Unread Email",
+                "from": {"name": "Sender", "address": "sender@example.com"},
+                "receivedDateTime": "2026-06-17T12:00:00Z",
+                "hasAttachments": False,
+            }
+        ]
+    }
 
 
 @pytest.mark.asyncio
@@ -154,7 +158,7 @@ async def test_list_mail_unread_only_combines_with_custom_filter(config: MailCon
         )
 
     assert first_route.called
-    assert result == []
+    assert result == {"emails": []}
 
 
 @pytest.mark.asyncio
@@ -495,3 +499,35 @@ async def test_forward_email_posts_to_forward_endpoint_with_recipients(config: M
     assert forward_route.called
     payload = forward_route.calls.last.request.read().decode()
     assert payload == '{"message":{"body":{"contentType":"Text","content":"FW: forwarded"},"toRecipients":[{"emailAddress":{"address":"new@example.com"}}]}}'
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_list_mail_truncates_client_side_when_api_returns_more(config: MailConfig):
+    mock_token()
+    messages = [
+        {
+            "id": f"msg-{i}",
+            "subject": f"Email {i}",
+            "from": {"emailAddress": {"address": "a@example.com", "name": "A"}},
+            "receivedDateTime": f"2026-06-18T{i:02d}:00:00Z",
+            "hasAttachments": False,
+        }
+        for i in range(1, 6)
+    ]
+    expected_url = (
+        f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages"
+        "?$orderby=receivedDateTime+desc&$top=2&$filter=isRead+eq+false"
+    )
+    route = respx.get(expected_url).mock(
+        return_value=httpx.Response(200, json={"value": messages})
+    )
+
+    async with GraphClient(config) as client:
+        result = await list_mail(config=config, client=client, unreadOnly=True, top=2)
+
+    assert route.called
+    emails: list[dict[str, object]] = cast(list[dict[str, object]], result["emails"])
+    assert len(emails) == 2
+    assert emails[0]["subject"] == "Email 1"
+    assert emails[1]["subject"] == "Email 2"

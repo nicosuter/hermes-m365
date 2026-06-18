@@ -81,7 +81,7 @@ async def test_empty_inbox_returns_empty_list(config: MailConfig):
         result = await list_mail(config=config, client=client, unreadOnly=False)
 
     assert route.called
-    assert result == []
+    assert result == {"emails": []}
 
 
 @pytest.mark.asyncio
@@ -114,4 +114,4 @@ async def test_empty_page_does_not_follow_odata_next_link(config: MailConfig):
 
     assert first_route.called
     assert not second_route.called
-    assert result == []
+    assert result == {"emails": []}

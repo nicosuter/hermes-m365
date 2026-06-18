@@ -225,7 +225,13 @@ class M365EmailAdapter(BasePlatformAdapter):
         assert self._mail_config is not None
         assert self._client is not None
 
-        messages: list[dict[str, object]] = [item async for item in self._client.paginate(inbox_url)]
+        response = await self._client.get(inbox_url)
+        payload = response.json()
+        raw_value = payload.get("value", [])
+        value: list[object] = raw_value if isinstance(raw_value, list) else []
+        messages: list[dict[str, object]] = [
+            item for item in value if isinstance(item, dict)
+        ][:self._mail_config.poll_top]
         starting_watermark = state.watermark
 
         for msg in messages:
@@ -422,7 +428,7 @@ async def _tool_call(func: Callable[..., Any], **kwargs: Any) -> Any:
         return await func(config=config, client=client, **kwargs)
 
 
-async def list_mail_wrapper(_: Any = None, *, top: int = 25, filter: str | None = None, **kwargs: Any) -> list[dict[str, object]]:
+async def list_mail_wrapper(_: Any = None, *, top: int = 25, filter: str | None = None, **kwargs: Any) -> dict[str, object]:
     from mail_tools import list_mail
 
     unread_only_val = kwargs.pop("unreadOnly", kwargs.pop("unread_only", True))

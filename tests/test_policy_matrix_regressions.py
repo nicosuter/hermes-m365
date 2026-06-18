@@ -130,7 +130,8 @@ async def test_policy_dropped_sender_manual_list_and_read_return_email_with_warn
         email = await get_email(config=config, client=client, email_id="dropped-message")
 
     assert inbox_route.called
-    assert listed[0]["from"] == {"name": "Stranger", "address": "stranger@example.com"}
+    emails: list[dict[str, object]] = cast(list[dict[str, object]], listed["emails"])
+    assert emails[0]["from"] == {"name": "Stranger", "address": "stranger@example.com"}
     assert email["isAllowedInboundSender"] is False
     assert email["warning"] == "UNTRUSTED_SENDER_NOT_IN_EMAIL_ALLOWED_USERS"
     assert email["attachments"] == [
