@@ -145,48 +145,14 @@ class M365EmailAdapter(BasePlatformAdapter):
         reply_to: str | None = None,
         metadata: dict[str, object] | None = None,
     ) -> SendResult:
-        """Send email via Graph sendMail.
+        """Stub — M365 Email adapter does NOT send via this path.
 
-        Args:
-            chat_id: "m365:recipient@example.com" or raw recipient address
-            content: plain text body
-            reply_to: optional reply-to message ID
-            metadata: optional dict with "subject", "thread_subject", etc.
+        The gateway calls send() for every streaming delta and the final response.
+        We suppress all of them so the agent doesn't flood recipients with
+        partial reasoning.  The agent MUST use reply_email, reply_all,
+        send_email, or forward_email tools to send actual emails.
         """
-        if not self.is_connected or self._client is None or self._mail_config is None:
-            logger.error("Cannot send: adapter not connected")
-            return SendResult(success=False)
-
-        # Determine recipient
-        if chat_id.startswith("m365:"):
-            recipient = chat_id[len("m365:"):]
-        else:
-            recipient = chat_id
-
-        # Determine subject
-        if metadata:
-            subject = metadata.get("subject")
-            if not subject:
-                thread_subject = metadata.get("thread_subject")
-                subject = f"Re: {thread_subject}" if thread_subject else "Message from Hermes"
-        else:
-            subject = "Message from Hermes"
-
-        subject = str(subject)
-
-        try:
-            result = await send_email(
-                config=self._mail_config,
-                client=self._client,
-                to=recipient,
-                subject=str(subject),
-                body=content,
-                reply_to=reply_to or self._mail_config.mailbox_user,
-            )
-            return SendResult(success=bool(result.get("success", False)))
-        except Exception as exc:
-            logger.error("Failed to send email to %s: %s", recipient, exc)
-            return SendResult(success=False)
+        return SendResult(success=False)
 
     def get_chat_info(self, chat_id: str) -> dict[str, object]:
         """Return chat info for a given chat_id."""
@@ -685,7 +651,7 @@ def register(ctx):
         env_enablement_fn=env_enablement,
         allowed_users_env="EMAIL_ALLOWED_USERS",
         max_message_length=32000,
-        platform_hint="Send email to any address. Chat ID format: m365:recipient@example.com",
+        platform_hint="Do NOT reply directly to this platform — send() is disabled. For your final response (max one per inbound email), use the email reply tool (reply_email or reply_all as appropriate), send_email, or forward_email. Chat ID format: m365:recipient@example.com",
         emoji="📧",
         allow_update_command=True,
         pii_safe=False,
