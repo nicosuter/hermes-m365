@@ -3,6 +3,20 @@ label: M365 Email
 kind: platform
 version: 0.1.0
 description: Microsoft 365 email platform adapter for Hermes gateway using Microsoft Graph API
+provides_tools:
+  - list_mail
+  - get_email
+  - get_attachment
+  - send_email
+  - reply_email
+  - reply_all
+  - forward_email
+  - mark_read
+  - mark_unread
+  - confirm_send_email
+  - confirm_reply_email
+  - confirm_reply_all
+  - confirm_forward_email
 requires_env:
   - M365_MAIL_CLIENT_ID
   - M365_MAIL_CLIENT_SECRET
