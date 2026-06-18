@@ -422,11 +422,12 @@ async def _tool_call(func: Callable[..., Any], **kwargs: Any) -> Any:
         return await func(config=config, client=client, **kwargs)
 
 
-async def list_mail_wrapper(_: Any = None, *, unreadOnly: bool, top: int = 50, filter: str | None = None, **kwargs: Any) -> dict[str, object]:
-    _ = kwargs
+async def list_mail_wrapper(_: Any = None, *, top: int = 50, filter: str | None = None, **kwargs: Any) -> dict[str, object]:
     from mail_tools import list_mail
 
-    items = await _tool_call(list_mail, unreadOnly=unreadOnly, top=top, filter=filter)
+    unread_only_val = kwargs.pop("unreadOnly", kwargs.pop("unread_only", True))
+
+    items = await _tool_call(list_mail, unreadOnly=unread_only_val, top=top, filter=filter)
     return {"count": len(items), "emails": items}
 
 
@@ -576,11 +577,11 @@ def register(ctx):
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "unreadOnly": {"type": "boolean"},
+                    "unreadOnly": {"type": "boolean", "default": True},
                     "top": {"type": "integer", "default": 50},
                     "filter": {"type": "string"},
                 },
-                "required": ["unreadOnly"],
+                "required": [],
             },
         },
         handler=list_mail_wrapper,

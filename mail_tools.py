@@ -20,7 +20,7 @@ async def list_mail(
     *,
     config: MailConfig,
     client: GraphClient,
-    unreadOnly: bool,
+    unreadOnly: bool = True,
     top: int = 50,
     filter: str | None = None,
 ) -> list[dict[str, object]]:
