@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from m365_email_hermes.config import DEFAULT_ATTACHMENT_MAX_BYTES, is_allowed_sender
+from config import DEFAULT_ATTACHMENT_MAX_BYTES, is_allowed_sender
 
 
 HERMES_EMAIL_ATTACHMENT_DIR = Path.home() / ".hermes" / "inbox" / "email"
@@ -45,6 +45,6 @@ def enforce_attachment_size(size_bytes: int, max_bytes: int = DEFAULT_ATTACHMENT
 
 
 def build_inline_attachment_body(body: str, inline_attachments: list[dict[str, object]]) -> str:
-    from m365_email_hermes.sanitize import insert_inline_attachment_markers
+    from sanitize import insert_inline_attachment_markers
 
     return insert_inline_attachment_markers(body, inline_attachments)

@@ -4,9 +4,9 @@ import os
 
 import pytest
 
-from m365_email_hermes.config import MailConfig
-from m365_email_hermes.graph import GraphClient
-from m365_email_hermes.mail_tools import list_mail
+from config import MailConfig
+from graph import GraphClient
+from mail_tools import list_mail
 
 
 REQUIRED_LIVE_ENV = (

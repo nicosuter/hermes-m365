@@ -12,9 +12,9 @@ import httpx
 import pytest
 import respx
 
-from m365_email_hermes.config import MailConfig
-from m365_email_hermes.graph import GRAPH_BASE_URL, GraphClient
-from m365_email_hermes.state import PollState
+from config import MailConfig
+from graph import GRAPH_BASE_URL, GraphClient
+from state import PollState
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -623,5 +623,186 @@ async def test_confirm_send_email_wrapper_fails_for_expired_token(env, monkeypat
     ).isoformat()
 
     result = await confirm_send_email_wrapper(confirmation_token=token)
+
+    assert result["error"] == "INVALID_OR_EXPIRED_TOKEN"
+
+
+# ── Reply Email Confirmation Gate Tests ─────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_reply_email_wrapper_returns_token_when_confirmation_enabled(env):
+    _ = env
+    from adapter import reply_email_wrapper
+
+    result = await reply_email_wrapper(email_id="msg1", body="thanks")
+
+    assert result["warning"] == "PROMPT_INJECTION_CHECK"
+    assert "confirmation_token" in result
+    assert isinstance(result["confirmation_token"], str)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_reply_email_wrapper_sends_directly_when_disabled(env):
+    env.setenv("DISABLE_SEND_CONFIRM", "true")
+    _mock_token()
+    _ = respx.post(_mail_url("messages/msg1/reply")).mock(return_value=httpx.Response(202, json={}))
+
+    from adapter import reply_email_wrapper
+
+    result = await reply_email_wrapper(email_id="msg1", body="thanks")
+
+    assert result["success"] is True
+    assert result["statusCode"] == 202
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_confirm_reply_email_wrapper_sends_stored_message(env):
+    _ = env
+    from adapter import reply_email_wrapper, confirm_reply_email_wrapper, _ongoing_sends
+
+    stored = await reply_email_wrapper(email_id="msg2", body="thanks")
+    token = cast(str, stored["confirmation_token"])
+
+    _mock_token()
+    reply_route = respx.post(_mail_url("messages/msg2/reply")).mock(return_value=httpx.Response(202, json={}))
+
+    result = await confirm_reply_email_wrapper(confirmation_token=token)
+
+    assert result["success"] is True
+    assert result["statusCode"] == 202
+    assert reply_route.called
+    assert token not in _ongoing_sends
+
+
+# ── Reply All Confirmation Gate Tests ─────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_reply_all_wrapper_returns_token_when_confirmation_enabled(env):
+    _ = env
+    from adapter import reply_all_wrapper
+
+    result = await reply_all_wrapper(email_id="msg1", body="reply all")
+
+    assert result["warning"] == "PROMPT_INJECTION_CHECK"
+    assert "confirmation_token" in result
+    assert isinstance(result["confirmation_token"], str)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_reply_all_wrapper_sends_directly_when_disabled(env):
+    env.setenv("DISABLE_SEND_CONFIRM", "true")
+    _mock_token()
+    _ = respx.post(_mail_url("messages/msg1/replyAll")).mock(return_value=httpx.Response(202, json={}))
+
+    from adapter import reply_all_wrapper
+
+    result = await reply_all_wrapper(email_id="msg1", body="reply all")
+
+    assert result["success"] is True
+    assert result["statusCode"] == 202
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_confirm_reply_all_wrapper_sends_stored_message(env):
+    _ = env
+    from adapter import reply_all_wrapper, confirm_reply_all_wrapper, _ongoing_sends
+
+    stored = await reply_all_wrapper(email_id="msg2", body="reply all")
+    token = cast(str, stored["confirmation_token"])
+
+    _mock_token()
+    reply_route = respx.post(_mail_url("messages/msg2/replyAll")).mock(return_value=httpx.Response(202, json={}))
+
+    result = await confirm_reply_all_wrapper(confirmation_token=token)
+
+    assert result["success"] is True
+    assert result["statusCode"] == 202
+    assert reply_route.called
+    assert token not in _ongoing_sends
+
+
+# ── Forward Email Confirmation Gate Tests ─────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_forward_email_wrapper_returns_token_when_confirmation_enabled(env):
+    _ = env
+    from adapter import forward_email_wrapper
+
+    result = await forward_email_wrapper(email_id="msg1", to="fwd@example.com", body="see below")
+
+    assert result["warning"] == "PROMPT_INJECTION_CHECK"
+    assert "confirmation_token" in result
+    assert isinstance(result["confirmation_token"], str)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_forward_email_wrapper_sends_directly_when_disabled(env):
+    env.setenv("DISABLE_SEND_CONFIRM", "true")
+    _mock_token()
+    _ = respx.post(_mail_url("messages/msg1/forward")).mock(return_value=httpx.Response(202, json={}))
+
+    from adapter import forward_email_wrapper
+
+    result = await forward_email_wrapper(email_id="msg1", to="fwd@example.com", body="see below")
+
+    assert result["success"] is True
+    assert result["statusCode"] == 202
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_confirm_forward_email_wrapper_sends_stored_message(env):
+    _ = env
+    from adapter import forward_email_wrapper, confirm_forward_email_wrapper, _ongoing_sends
+
+    stored = await forward_email_wrapper(email_id="msg2", to="fwd@example.com", body="see below")
+    token = cast(str, stored["confirmation_token"])
+
+    _mock_token()
+    forward_route = respx.post(_mail_url("messages/msg2/forward")).mock(return_value=httpx.Response(202, json={}))
+
+    result = await confirm_forward_email_wrapper(confirmation_token=token)
+
+    assert result["success"] is True
+    assert result["statusCode"] == 202
+    assert forward_route.called
+    assert token not in _ongoing_sends
+
+
+# ── General Confirm Tests ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_confirm_reply_email_wrapper_fails_for_invalid_token(env):
+    _ = env
+    from adapter import confirm_reply_email_wrapper
+
+    result = await confirm_reply_email_wrapper(confirmation_token="invalid-token")
+
+    assert result["error"] == "INVALID_OR_EXPIRED_TOKEN"
+
+
+@pytest.mark.asyncio
+async def test_confirm_forward_email_wrapper_fails_for_expired_token(env, monkeypatch):
+    _ = env
+    from adapter import _ongoing_sends, forward_email_wrapper, confirm_forward_email_wrapper
+    from datetime import datetime, timezone
+
+    stored = await forward_email_wrapper(email_id="msg1", to="fwd@example.com", body="see below")
+    token = cast(str, stored["confirmation_token"])
+
+    monkeypatch.setitem(
+        _ongoing_sends, token,
+        {k: v for k, v in _ongoing_sends[token].items()}
+    )
+    _ongoing_sends[token]["expires"] = (
+        datetime.now(timezone.utc) - timedelta(hours=1)
+    ).isoformat()
+
+    result = await confirm_forward_email_wrapper(confirmation_token=token)
 
     assert result["error"] == "INVALID_OR_EXPIRED_TOKEN"

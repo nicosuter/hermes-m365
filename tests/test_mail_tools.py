@@ -9,9 +9,9 @@ import httpx
 import pytest
 import respx
 
-from m365_email_hermes.config import MailConfig
-from m365_email_hermes.graph import GRAPH_BASE_URL, GraphClient
-from m365_email_hermes.mail_tools import get_attachment, get_email, list_mail, send_email
+from config import MailConfig
+from graph import GRAPH_BASE_URL, GraphClient
+from mail_tools import get_attachment, get_email, list_mail, send_email
 
 
 @pytest.fixture
@@ -42,8 +42,8 @@ class _MailToolsModule(Protocol):
 
 def reload_mail_tools_with_home(monkeypatch: pytest.MonkeyPatch, home: Path) -> _MailToolsModule:
     monkeypatch.setenv("HOME", str(home))
-    import m365_email_hermes.attachments as attachments
-    import m365_email_hermes.mail_tools as mail_tools
+    import attachments
+    import mail_tools
 
     importlib.reload(attachments)
     return cast(_MailToolsModule, cast(object, importlib.reload(mail_tools)))
@@ -429,7 +429,7 @@ async def test_send_email_posts_text_message_and_optional_reply_to(config: MailC
 @pytest.mark.asyncio
 @respx.mock
 async def test_mark_read_sets_isRead_true(config: MailConfig):
-    from m365_email_hermes.mail_tools import mark_read
+    from mail_tools import mark_read
 
     mock_token()
     patch_route = respx.patch(f"{GRAPH_BASE_URL}/users/user%40example.org/messages/message-1").mock(
@@ -448,7 +448,7 @@ async def test_mark_read_sets_isRead_true(config: MailConfig):
 @pytest.mark.asyncio
 @respx.mock
 async def test_mark_unread_sets_isRead_false(config: MailConfig):
-    from m365_email_hermes.mail_tools import mark_unread
+    from mail_tools import mark_unread
 
     mock_token()
     patch_route = respx.patch(f"{GRAPH_BASE_URL}/users/user%40example.org/messages/message-2").mock(
@@ -467,7 +467,7 @@ async def test_mark_unread_sets_isRead_false(config: MailConfig):
 @pytest.mark.asyncio
 @respx.mock
 async def test_reply_email_posts_to_reply_endpoint(config: MailConfig):
-    from m365_email_hermes.mail_tools import reply_email
+    from mail_tools import reply_email
 
     mock_token()
     reply_route = respx.post(f"{GRAPH_BASE_URL}/users/user%40example.org/messages/message-1/reply").mock(
@@ -486,7 +486,7 @@ async def test_reply_email_posts_to_reply_endpoint(config: MailConfig):
 @pytest.mark.asyncio
 @respx.mock
 async def test_reply_all_posts_to_replyAll_endpoint(config: MailConfig):
-    from m365_email_hermes.mail_tools import reply_all
+    from mail_tools import reply_all
 
     mock_token()
     reply_route = respx.post(f"{GRAPH_BASE_URL}/users/user%40example.org/messages/message-1/replyAll").mock(
@@ -505,7 +505,7 @@ async def test_reply_all_posts_to_replyAll_endpoint(config: MailConfig):
 @pytest.mark.asyncio
 @respx.mock
 async def test_forward_email_posts_to_forward_endpoint_with_recipients(config: MailConfig):
-    from m365_email_hermes.mail_tools import forward_email
+    from mail_tools import forward_email
 
     mock_token()
     forward_route = respx.post(f"{GRAPH_BASE_URL}/users/user%40example.org/messages/message-1/forward").mock(

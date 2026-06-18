@@ -11,9 +11,9 @@ import httpx
 import pytest
 import respx
 
-from m365_email_hermes.config import MailConfig
-from m365_email_hermes.graph import GRAPH_BASE_URL, GraphClient
-from m365_email_hermes.mail_tools import get_attachment, get_email, list_mail
+from config import MailConfig
+from graph import GRAPH_BASE_URL, GraphClient
+from mail_tools import get_attachment, get_email, list_mail
 
 
 class _MailToolsModule(Protocol):
@@ -67,8 +67,8 @@ def attachment_payload(attachment_id: str, name: str, content: bytes) -> dict[st
 
 def reload_mail_tools_with_home(monkeypatch: pytest.MonkeyPatch, home: Path) -> _MailToolsModule:
     monkeypatch.setenv("HOME", str(home))
-    import m365_email_hermes.attachments as attachments
-    import m365_email_hermes.mail_tools as mail_tools
+    import attachments
+    import mail_tools
 
     importlib.reload(attachments)
     return cast(_MailToolsModule, cast(object, importlib.reload(mail_tools)))

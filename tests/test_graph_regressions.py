@@ -6,9 +6,9 @@ import httpx
 import pytest
 import respx
 
-from m365_email_hermes.config import MailConfig
-from m365_email_hermes.graph import GRAPH_BASE_URL, GraphClient
-from m365_email_hermes.mail_tools import list_mail
+from config import MailConfig
+from graph import GRAPH_BASE_URL, GraphClient
+from mail_tools import list_mail
 
 
 @pytest.fixture

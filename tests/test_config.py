@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from m365_email_hermes.config import MailConfig, MailConfigError, is_allowed_sender, parse_email_allowed_users
+from config import MailConfig, MailConfigError, is_allowed_sender, parse_email_allowed_users
 
 
 REQUIRED_ENV = (

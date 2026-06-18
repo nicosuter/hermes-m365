@@ -6,35 +6,38 @@ A **Hermes gateway platform plugin** (NOT an MCP server, NOT FastMCP). It treats
 
 ## Project Layout — Non-Standard
 
-`adapter.py` and `plugin.yaml` **must stay at the project root** for Hermes plugin discovery. The `m365_email_hermes/` package contains all supporting modules. `__init__.py` does a `sys.path` hack to import root-level `adapter.py`.
+`adapter.py` and `plugin.yaml` **must stay at the project root** for Hermes plugin discovery. All other modules are sibling Python files (flat layout, no package).
 
 ```
 m365-email-hermes-plugin/
 ├── plugin.yaml              # Hermes manifest — MUST be at root
 ├── adapter.py               # register(ctx) + M365EmailAdapter — MUST be at root
-├── m365_email_hermes/       # package modules
-│   ├── config.py            # MailConfig, EMAIL_ALLOWED_USERS parsing
-│   ├── graph.py             # GraphClient (token, pagination, /users/{mailbox} routing)
-│   ├── mail_tools.py        # list_mail, get_email, get_attachment, send_email, reply, forward, mark read/unread
-│   ├── sanitize.py          # HTML→text, hidden content removal
-│   ├── attachments.py       # filename safety, sender gating, deterministic paths
-│   └── state.py             # PollState (watermark, processed IDs, _MAX_PROCESSED_IDS=500)
-└── tests/                   # 98 tests + 1 skipped live smoke (no conftest.py)
+├── config.py                # MailConfig, EMAIL_ALLOWED_USERS parsing
+├── graph.py                 # GraphClient (token, pagination, /users/{mailbox} routing)
+├── mail_tools.py            # list_mail, get_email, get_attachment, send_email, reply, forward, mark read/unread
+├── sanitize.py              # HTML→text, hidden content removal
+├── attachments.py           # filename safety, sender gating, deterministic paths
+├── state.py                 # PollState (watermark, processed IDs, _MAX_PROCESSED_IDS=500)
+├── __init__.py              # module marker for Hermes plugin discovery
+└── tests/                   # fast tests via respx/httpx, plus 1 live smoke
 ```
 
 ## Tool Registry
 
-`register(ctx)` wires **10 tools** into Hermes:
+`register(ctx)` wires tools into Hermes:
 
 - `list_mail(top=50, filter=None, unreadOnly=False)`
 - `get_email(email_id)` — returns sanitized text + attachment metadata only (no bytes)
 - `get_attachment(email_id, attachment_id)` — downloads to `~/.hermes/inbox/email/`
-- `send_email(to, subject, body, reply_to=None)` — requires confirmation token unless `DISABLE_SEND_CONFIRM=true`
-- `reply_email(email_id, body)`
-- `reply_all(email_id, body)`
-- `forward_email(email_id, to, body)`
+- `send_email(to, subject, body, reply_to=None)` — requires `confirm_send_email(token)` unless `DISABLE_SEND_CONFIRM=true`
+- `reply_email(email_id, body)` — requires `confirm_reply_email(token)` unless `DISABLE_SEND_CONFIRM=true`
+- `reply_all(email_id, body)` — requires `confirm_reply_all(token)` unless `DISABLE_SEND_CONFIRM=true`
+- `forward_email(email_id, to, body)` — requires `confirm_forward_email(token)` unless `DISABLE_SEND_CONFIRM=true`
 - `mark_read(email_id)` / `mark_unread(email_id)`
 - `confirm_send_email(confirmation_token)` — completes a pending `send_email`
+- `confirm_reply_email(confirmation_token)` — completes a pending `reply_email`
+- `confirm_reply_all(confirmation_token)` — completes a pending `reply_all`
+- `confirm_forward_email(confirmation_token)` — completes a pending `forward_email`
 
 ## Critical Constraints
 
@@ -47,7 +50,7 @@ m365-email-hermes-plugin/
 ## Commands
 
 ```bash
-uv run pytest -q                    # full suite (98 pass, 1 skip)
+uv run pytest -q                    # full suite
 uv run pytest -q -k live            # live smoke (skipped by default)
 uv run pytest tests/test_adapter.py -q   # adapter + polling only
 grep -R '"/me"' . --include='*.py'  # must produce NO output

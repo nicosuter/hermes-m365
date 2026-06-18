@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import quote, quote_plus
 
-from m365_email_hermes.attachments import build_saved_path, check_attachment_sender, enforce_attachment_size, sanitize_filename
-from m365_email_hermes.config import MailConfig, is_allowed_sender
-from m365_email_hermes.graph import GraphClient
-from m365_email_hermes.sanitize import insert_inline_attachment_markers, sanitize_html_body
+from attachments import build_saved_path, check_attachment_sender, enforce_attachment_size, sanitize_filename
+from config import MailConfig, is_allowed_sender
+from graph import GraphClient
+from sanitize import insert_inline_attachment_markers, sanitize_html_body
 
 
 UNTRUSTED_SENDER_WARNING = "UNTRUSTED_SENDER_NOT_IN_EMAIL_ALLOWED_USERS"

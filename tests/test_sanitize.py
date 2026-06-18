@@ -1,6 +1,6 @@
 # pyright: reportMissingImports=false, reportUnknownVariableType=false
 
-from m365_email_hermes.sanitize import insert_inline_attachment_markers, sanitize_html_body
+from sanitize import insert_inline_attachment_markers, sanitize_html_body
 
 
 def test_html_body_converts_visible_content_to_text():

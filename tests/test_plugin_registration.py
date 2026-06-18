@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from m365_email_hermes.config import MailConfigError
+from config import MailConfigError
 
 
 # ── Fake context ───────────────────────────────────────────────────────────
@@ -68,7 +68,7 @@ class TestAdapterRegistration:
         assert ctx.platform_kwargs is not None
         assert ctx.platform_kwargs["name"] == "m365_email"
 
-    def test_registers_all_nine_tools(self) -> None:
+    def test_registers_all_thirteen_tools(self) -> None:
         from adapter import register
 
         ctx = FakeContext()
@@ -77,7 +77,8 @@ class TestAdapterRegistration:
         expected = {
             "list_mail", "get_email", "get_attachment", "send_email",
             "reply_email", "reply_all", "forward_email",
-            "mark_read", "mark_unread", "confirm_send_email",
+            "mark_read", "mark_unread",
+            "confirm_send_email", "confirm_reply_email", "confirm_reply_all", "confirm_forward_email",
         }
         assert tool_names == expected
 

@@ -9,7 +9,7 @@ from urllib.parse import quote
 
 import httpx
 
-from m365_email_hermes.config import MailConfig
+from config import MailConfig
 
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"

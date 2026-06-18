@@ -7,7 +7,7 @@ from typing import cast
 
 import pytest
 
-from m365_email_hermes.config import MailConfig, parse_email_allowed_users
+from config import MailConfig, parse_email_allowed_users
 
 
 class _AttachmentsModule(Protocol):
@@ -26,7 +26,7 @@ class _AttachmentsModule(Protocol):
 
 def reload_attachments_with_home(monkeypatch: pytest.MonkeyPatch, home: Path) -> _AttachmentsModule:
     monkeypatch.setenv("HOME", str(home))
-    import m365_email_hermes.attachments as attachments
+    import attachments
 
     return cast(_AttachmentsModule, cast(object, importlib.reload(attachments)))
 
