@@ -38,7 +38,11 @@ async def list_mail(
         query_parts.append(f"$filter={quote_plus(' and '.join(filters))}")
 
     url = client.mail_url(f"mailFolders/inbox/messages?{'&'.join(query_parts)}")
-    return [_message_summary(item) async for item in client.paginate(url)]
+    response = await client.get(url)
+    payload = cast(dict[str, object], response.json())
+    raw_value = payload.get("value", [])
+    value: list[object] = cast(list[object], raw_value) if isinstance(raw_value, list) else []
+    return [_message_summary(cast(dict[str, object], item)) for item in value if isinstance(item, dict)]
 
 
 async def get_email(*, config: MailConfig, client: GraphClient, email_id: str) -> dict[str, object]:

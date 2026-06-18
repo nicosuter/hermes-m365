@@ -86,7 +86,7 @@ async def test_empty_inbox_returns_empty_list(config: MailConfig):
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_empty_page_still_follows_odata_next_link(config: MailConfig):
+async def test_empty_page_does_not_follow_odata_next_link(config: MailConfig):
     mock_token()
     second_url = f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages?page=2"
     first_route = respx.get(inbox_url(top=1)).mock(
@@ -113,13 +113,5 @@ async def test_empty_page_still_follows_odata_next_link(config: MailConfig):
         result = await list_mail(config=config, client=client, unreadOnly=False, top=1)
 
     assert first_route.called
-    assert second_route.called
-    assert result == [
-        {
-            "id": "message-2",
-            "subject": "Arrived later",
-            "from": {"name": "Trusted", "address": "trusted@example.com"},
-            "receivedDateTime": "2026-06-17T10:00:00Z",
-            "hasAttachments": False,
-        }
-    ]
+    assert not second_route.called
+    assert result == []

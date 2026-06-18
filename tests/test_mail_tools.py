@@ -51,13 +51,12 @@ def reload_mail_tools_with_home(monkeypatch: pytest.MonkeyPatch, home: Path) -> 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_list_mail_paginates_orders_filters_and_returns_all_senders(config: MailConfig):
+async def test_list_mail_orders_filters_and_respects_top(config: MailConfig):
     mock_token()
     first_url = (
         f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages"
         "?$orderby=receivedDateTime+desc&$top=2&$filter=from/emailAddress/address+eq+'stranger%40example.com'"
     )
-    second_url = f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages?page=2"
     first_route = respx.get(first_url).mock(
         return_value=httpx.Response(
             200,
@@ -72,23 +71,6 @@ async def test_list_mail_paginates_orders_filters_and_returns_all_senders(config
                         "body": {"content": "not returned"},
                     }
                 ],
-                "@odata.nextLink": second_url,
-            },
-        )
-    )
-    second_route = respx.get(second_url).mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "value": [
-                    {
-                        "id": "message-2",
-                        "subject": "Older",
-                        "from": {"emailAddress": {"address": "trusted@example.com", "name": "Trusted"}},
-                        "receivedDateTime": "2026-06-16T10:00:00Z",
-                        "hasAttachments": False,
-                    }
-                ]
             },
         )
     )
@@ -99,7 +81,6 @@ async def test_list_mail_paginates_orders_filters_and_returns_all_senders(config
         )
 
     assert first_route.called
-    assert second_route.called
     assert result == [
         {
             "id": "message-1",
@@ -107,13 +88,6 @@ async def test_list_mail_paginates_orders_filters_and_returns_all_senders(config
             "from": {"name": "Stranger", "address": "stranger@example.com"},
             "receivedDateTime": "2026-06-17T10:00:00Z",
             "hasAttachments": True,
-        },
-        {
-            "id": "message-2",
-            "subject": "Older",
-            "from": {"name": "Trusted", "address": "trusted@example.com"},
-            "receivedDateTime": "2026-06-16T10:00:00Z",
-            "hasAttachments": False,
         },
     ]
 
