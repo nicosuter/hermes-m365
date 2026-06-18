@@ -552,7 +552,6 @@ def register(ctx):
         emoji="📧",
         allow_update_command=True,
         pii_safe=False,
-        install_hint="pip install m365-email-hermes-plugin",
         setup_fn=interactive_setup,
     )
     ctx.register_tool(
