@@ -10,7 +10,7 @@ Integrates Microsoft 365 (M365) email as a platform and toolset within the Herme
 Add as a git submodule to your Hermes plugins directory:
 
 ```bash
-git submodule add <repository-url> ~/.hermes/hermes-agent/plugins/platforms/m365_email/
+git submodule add https://github.com/nicosuter/hermes-m365 ~/.hermes/hermes-agent/plugins/platforms/m365_email/
 ```
 
 Then enable in `config.yaml`:
