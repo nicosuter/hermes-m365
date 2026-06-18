@@ -132,8 +132,7 @@ class GraphClient:
         json: dict[str, object] | None = None,
     ) -> httpx.Response:
         token = await self.acquire_token(force_refresh=force_refresh)
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Prefer": 'outlook.body-content-type="text"',
-        }
+        headers = {"Authorization": f"Bearer {token}"}
+        if method == "GET":
+            headers["Prefer"] = 'outlook.body-content-type="text"'
         return await self._client.request(method, url, headers=headers, json=json)
