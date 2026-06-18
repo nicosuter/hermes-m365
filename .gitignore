@@ -1,0 +1,8 @@
+.env
+.env.local
+.omo/
+.runtime/
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/

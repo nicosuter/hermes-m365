@@ -1,0 +1,29 @@
+[project]
+name = "m365-email-hermes-plugin"
+version = "0.1.0"
+description = "M365 Email plugin for Hermes — send, reply, forward, read Outlook emails via Microsoft Graph API."
+requires-python = ">=3.12"
+dependencies = [
+    "httpx",
+    "python-dotenv",
+    "beautifulsoup4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "respx",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "respx",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
