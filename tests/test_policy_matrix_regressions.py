@@ -116,7 +116,7 @@ async def test_policy_allowed_inbound_sender_can_read_and_fetch_attachment(
 async def test_policy_dropped_sender_manual_list_and_read_return_email_with_warning(config: MailConfig):
     mock_token()
     inbox_route = respx.get(
-        mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=50")
+        mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=25")
     ).mock(return_value=httpx.Response(200, json={"value": [message_payload("dropped-message", "stranger@example.com")]}))
     respx.get(mail_url("messages/dropped-message")).mock(
         return_value=httpx.Response(200, json=message_payload("dropped-message", "stranger@example.com"))

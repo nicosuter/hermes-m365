@@ -28,7 +28,7 @@ def mock_token() -> None:
     )
 
 
-def inbox_url(top: int = 50) -> str:
+def inbox_url(top: int = 25) -> str:
     return (
         f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages"
         f"?$orderby=receivedDateTime+desc&$top={top}"

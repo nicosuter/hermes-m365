@@ -203,7 +203,7 @@ class M365EmailAdapter(BasePlatformAdapter):
         if not state.watermark:
             state.watermark = datetime.now(timezone.utc).isoformat()
 
-        inbox_url = self._client.mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=50")
+        inbox_url = self._client.mail_url(f"mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top={self._mail_config.poll_top}")
 
         while True:
             try:
@@ -422,7 +422,7 @@ async def _tool_call(func: Callable[..., Any], **kwargs: Any) -> Any:
         return await func(config=config, client=client, **kwargs)
 
 
-async def list_mail_wrapper(_: Any = None, *, top: int = 50, filter: str | None = None, **kwargs: Any) -> dict[str, object]:
+async def list_mail_wrapper(_: Any = None, *, top: int = 25, filter: str | None = None, **kwargs: Any) -> dict[str, object]:
     from mail_tools import list_mail
 
     unread_only_val = kwargs.pop("unreadOnly", kwargs.pop("unread_only", True))
@@ -578,7 +578,7 @@ def register(ctx):
                 "type": "object",
                 "properties": {
                     "unreadOnly": {"type": "boolean", "default": True},
-                    "top": {"type": "integer", "default": 50},
+                    "top": {"type": "integer", "default": 25},
                     "filter": {"type": "string"},
                 },
                 "required": [],

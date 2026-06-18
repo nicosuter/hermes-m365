@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 
 DEFAULT_ATTACHMENT_MAX_BYTES = 10_485_760
+DEFAULT_POLL_TOP = 25
 DEFAULT_EMAIL_STATE_PATH = Path(".runtime/poll-state.json")
 REQUIRED_ENV_VARS = (
     "M365_MAIL_CLIENT_ID",
@@ -36,6 +37,7 @@ class MailConfig:
     allowed_users: set[str] = field(default_factory=set)
     attachment_max_bytes: int = DEFAULT_ATTACHMENT_MAX_BYTES
     email_state_path: Path = DEFAULT_EMAIL_STATE_PATH
+    poll_top: int = DEFAULT_POLL_TOP
 
     @classmethod
     def from_env(cls, *, load_dotenv: bool = True, project_root: Path | None = None) -> "MailConfig":
@@ -61,6 +63,11 @@ class MailConfig:
                 DEFAULT_ATTACHMENT_MAX_BYTES,
             ),
             email_state_path=Path(env.get("M365_EMAIL_STATE_PATH", str(DEFAULT_EMAIL_STATE_PATH))),
+            poll_top=parse_positive_int(
+                env,
+                "M365_POLL_TOP",
+                DEFAULT_POLL_TOP,
+            ),
         )
 
 

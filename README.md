@@ -39,7 +39,7 @@ platforms:
 
 ## Tool Contracts
 
-- `list_mail(top=50, filter=None, unreadOnly=False)`: List recent emails from the inbox. Returns all senders (subject to inbound drop logic). `unreadOnly` filters to unread messages only.
+- `list_mail(top=25, filter=None, unreadOnly=False)`: List recent emails from the inbox. Returns all senders (subject to inbound drop logic). `unreadOnly` filters to unread messages only.
 - `get_email(email_id)`: Retrieve email content. Returns sanitized text and attachment metadata.
 - `get_attachment(email_id, attachment_id)`: Download an attachment.
 - `send_email(to, subject, body, reply_to=None)`: Send a plain text email. `reply_to` sets the Reply-To email address header.

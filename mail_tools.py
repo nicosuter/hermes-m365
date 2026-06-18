@@ -21,7 +21,7 @@ async def list_mail(
     config: MailConfig,
     client: GraphClient,
     unreadOnly: bool = True,
-    top: int = 50,
+    top: int = 25,
     filter: str | None = None,
 ) -> list[dict[str, object]]:
     _ = config

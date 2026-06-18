@@ -124,7 +124,7 @@ async def test_list_mail_unread_only_adds_isRead_filter(config: MailConfig):
     mock_token()
     first_url = (
         f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages"
-        "?$orderby=receivedDateTime+desc&$top=50&$filter=isRead+eq+false"
+        "?$orderby=receivedDateTime+desc&$top=25&$filter=isRead+eq+false"
     )
     first_route = respx.get(first_url).mock(
         return_value=httpx.Response(

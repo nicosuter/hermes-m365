@@ -162,7 +162,7 @@ async def test_first_run_records_watermark_and_does_not_emit_old_messages(env, s
     adapter.handle_message = tracker  # type: ignore[method-assign]
 
     old_msg = _make_message("msg-old", "trusted@example.com", "Trusted", received="2026-06-16T10:00:00Z")
-    inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=50")).mock(
+    inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=25")).mock(
         return_value=httpx.Response(200, json={"value": [old_msg]})
     )
 
@@ -200,7 +200,7 @@ async def test_new_message_after_watermark_calls_handle_message(env, state_path)
         conversation_id="conv-42",
         internet_message_id="<urgent@example.com>",
     )
-    inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=50")).mock(
+    inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=25")).mock(
         return_value=httpx.Response(200, json={"value": [new_msg]})
     )
 
@@ -242,7 +242,7 @@ async def test_unallowed_sender_dropped(env, state_path):
     evil_msg = _make_message("msg-evil", "evil@example.com", "Evil",
                              subject="Hack", body="<script>alert(1)</script>",
                              received=future_ts)
-    inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=50")).mock(
+    inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=25")).mock(
         return_value=httpx.Response(200, json={"value": [evil_msg]})
     )
 
@@ -271,7 +271,7 @@ async def test_empty_allowed_users_drops_all(env, state_path):
 
     future_ts = (datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat()
     msg = _make_message("msg-1", "anyone@example.com", "Anyone", received=future_ts)
-    inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=50")).mock(
+    inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=25")).mock(
         return_value=httpx.Response(200, json={"value": [msg]})
     )
 
@@ -304,7 +304,7 @@ async def test_duplicate_message_id_skipped_after_state_persistence(env, state_p
     adapter.handle_message = tracker  # type: ignore[method-assign]
 
     msg = _make_message("msg-1", "trusted@example.com", "Trusted", received="2026-06-17T12:00:00Z")
-    inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=50")).mock(
+    inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=25")).mock(
         return_value=httpx.Response(200, json={"value": [msg]})
     )
 
@@ -452,7 +452,7 @@ async def test_polling_does_not_mark_mail_read(env, state_path):
 
     future_ts = (datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat()
     msg = _make_message("msg-1", "trusted@example.com", "Trusted", received=future_ts)
-    inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=50")).mock(
+    inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=25")).mock(
         return_value=httpx.Response(200, json={"value": [msg]})
     )
 
@@ -500,7 +500,7 @@ async def test_watermark_does_not_skip_newer_messages_in_same_poll(env, state_pa
     pre_state.watermark = "2026-06-17T10:00:00Z"
     pre_state.save(state_path)
 
-    inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=50")).mock(
+    inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=25")).mock(
         return_value=httpx.Response(200, json={"value": [msg_newer, msg_older]})
     )
 
