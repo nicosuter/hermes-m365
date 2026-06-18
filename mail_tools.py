@@ -10,7 +10,6 @@ from urllib.parse import quote, quote_plus
 from attachments import build_saved_path, check_attachment_sender, enforce_attachment_size, sanitize_filename
 from config import MailConfig, is_allowed_sender
 from graph import GraphClient
-from sanitize import insert_inline_attachment_markers, sanitize_html_body
 
 
 UNTRUSTED_SENDER_WARNING = "UNTRUSTED_SENDER_NOT_IN_EMAIL_ALLOWED_USERS"
@@ -50,7 +49,21 @@ async def get_email(*, config: MailConfig, client: GraphClient, email_id: str) -
 
     attachments = await _get_attachment_metadata(client, email_id) if bool(message.get("hasAttachments")) else []
     inline_attachments = [attachment for attachment in attachments if bool(attachment.get("isInline"))]
-    body = insert_inline_attachment_markers(_sanitize_message_body(message), inline_attachments)
+
+    raw_body = _sanitize_message_body(message)
+    try:
+        from tools.lazy_deps import ensure
+        ensure("m365_email.bs4")
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    try:
+        from sanitize import insert_inline_attachment_markers
+        body = insert_inline_attachment_markers(raw_body, inline_attachments)
+    except ImportError:
+        body = raw_body
     attachments_by_id = {
         str(attachment["attachmentId"]): attachment for attachment in attachments if attachment.get("attachmentId")
     }
@@ -254,7 +267,21 @@ def _sanitize_message_body(message: dict[str, object]) -> str:
     if not isinstance(body, dict):
         return ""
     body_payload = cast(dict[str, object], body)
-    return sanitize_html_body(_string_value(body_payload.get("content")))
+    content = _string_value(body_payload.get("content"))
+
+    try:
+        from tools.lazy_deps import ensure
+        ensure("m365_email.bs4")
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    try:
+        from sanitize import sanitize_html_body
+        return sanitize_html_body(content)
+    except ImportError:
+        return content
 
 
 def _recipient_list(raw_recipients: object) -> list[dict[str, str]]:

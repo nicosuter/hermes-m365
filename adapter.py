@@ -13,7 +13,6 @@ from typing import Any, Callable
 from config import MailConfig, MailConfigError, is_allowed_sender, REQUIRED_ENV_VARS
 from graph import GraphClient
 from mail_tools import forward_email, reply_all, reply_email, send_email
-from sanitize import sanitize_html_body
 from state import PollState
 
 from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType, SendResult
@@ -259,7 +258,20 @@ class M365EmailAdapter(BasePlatformAdapter):
                 body_content = str(body_raw.get("content", ""))
             else:
                 body_content = ""
-            text = sanitize_html_body(body_content)
+            text = body_content
+            try:
+                from tools.lazy_deps import ensure
+                ensure("m365_email.bs4")
+            except ImportError:
+                pass
+            except Exception:
+                pass
+
+            try:
+                from sanitize import sanitize_html_body
+                text = sanitize_html_body(body_content)
+            except ImportError:
+                pass
 
             chat_id = f"m365:{sender_address}"
             chat_name = sender_name if sender_name else sender_address
