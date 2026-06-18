@@ -195,6 +195,59 @@ class TestHermesContract:
         result = env_enablement()
         assert isinstance(result, dict)
 
+    def test_is_connected_fn_returns_true_from_env(self, monkeypatch) -> None:
+        """When env vars are set, is_connected_fn must report "configured".
+
+        This is the regression test for the bug where is_connected_fn checked
+        the runtime _is_connected flag instead of configuration.  The gateway
+        calls is_connected() before connect(), so it must inspect credentials.
+        """
+        from adapter import is_connected_fn
+
+        for key in ("M365_MAIL_CLIENT_ID", "M365_MAIL_CLIENT_SECRET", "M365_MAIL_TENANT_ID", "M365_MAILBOX_USER"):
+            monkeypatch.setenv(key, "ok")
+
+        assert is_connected_fn() is True
+
+    def test_is_connected_fn_returns_true_from_config_extra(self) -> None:
+        """is_connected_fn must read PlatformConfig.extra when env vars are absent."""
+        from adapter import is_connected_fn
+
+        mock_config = type("MockConfig", (), {
+            "extra": {
+                "client_id": "id",
+                "client_secret": "secret",
+                "tenant_id": "tenant",
+                "mailbox_user": "user@example.org",
+            }
+        })()
+
+        assert is_connected_fn(mock_config) is True
+
+    def test_is_connected_fn_returns_false_when_unconfigured(self) -> None:
+        """is_connected_fn must return False when no credentials exist anywhere."""
+        from adapter import is_connected_fn
+
+        # Ensure env vars are not set
+        with patch_environ({}, clear_required=True):
+            assert is_connected_fn() is False
+
+    def test_validate_config_reads_config_extra(self) -> None:
+        """validate_config must check PlatformConfig.extra, not only env vars."""
+        from adapter import validate_config
+
+        mock_config = type("MockConfig", (), {
+            "extra": {
+                "client_id": "id",
+                "client_secret": "secret",
+                "tenant_id": "tenant",
+                "mailbox_user": "user@example.org",
+            }
+        })()
+
+        with patch_environ({}, clear_required=True):
+            assert validate_config(mock_config) is True
+
     def test_adapter_has_base_class_lifecycle_methods(self) -> None:
         from adapter import M365EmailAdapter
         from gateway.platforms.base import BasePlatformAdapter

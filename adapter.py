@@ -20,6 +20,14 @@ from gateway.config import Platform
 
 logger = logging.getLogger(__name__)
 
+# Minimal env vars needed for Hermes to consider the platform "configured"
+MINIMAL_ENV_VARS = (
+    "M365_MAIL_CLIENT_ID",
+    "M365_MAIL_CLIENT_SECRET",
+    "M365_MAIL_TENANT_ID",
+    "M365_MAILBOX_USER",
+)
+
 _is_connected: bool = False
 _ongoing_sends: dict[str, dict[str, Any]] = {}
 
@@ -318,36 +326,137 @@ class M365EmailAdapter(BasePlatformAdapter):
 
 
 # ── Connection Helpers ──────────────────────────────────────────────────────
+#
+# Hermes platform lifecycle — know the difference:
+#
+#   "Configured"  →  Credentials present (env vars or config.yaml extra).
+#                    GatewayConfig._is_platform_connected() calls
+#                    PlatformEntry.is_connected(config) which delegates to the
+#                    `is_connected` handler registered below.
+#
+#   "Connected"   →  Adapter.connect() has run and _mark_connected() was called.
+#                    This is a RUNTIME state, not a configuration state.
+#
+#   "Validated"   →  After "configured", the gateway calls validate_config()
+#                    before attempting connect().  This should check the same
+#                    credentials but has access to the full PlatformConfig.
+#
+#   "Requirements"→  check_requirements() is the first gate.  It checks that
+#                    the plugin's *dependencies* are satisfied (e.g. env vars
+#                    present, optional packages installed).  If this returns
+#                    False the platform is skipped entirely.
+#
+#   "Enabled"     →  env_enablement() seeds PlatformConfig.extra from env vars
+#                    during config load.  If it returns None, the platform
+#                    is considered "not configured" and shows up as disabled.
+#
+#   "Registered"  →  The adapter_factory is stored in PlatformEntry at startup.
+#                    Actual adapter construction only happens when connect()
+#                    is called.
+#
+# Common pitfall:  is_connected() must return True based on CONFIGURATION,
+# not on whether connect() has been called.  If it checks _is_connected,
+# Hermes will report "not configured" because is_connected() is queried
+# long before the gateway ever calls connect().
+
 
 def check_connected() -> bool:
+    """Runtime flag — True only after connect() succeeds and _mark_connected() runs.
+
+    This tracks the *live* WebSocket / HTTP polling state.  It is NOT used
+    by Hermes to decide whether the platform shows up as "configured".
+    """
     return _is_connected
 
 
-def is_connected_fn() -> bool:
-    return _is_connected
+def is_connected_fn(config=None) -> bool:
+    """Configuration check — True when credentials are present (env or config.extra).
+
+    This is the Hermes contract for ``PlatformEntry.is_connected``.  The
+    gateway calls it to decide whether the platform appears "configured"
+    in ``hermes gateway setup``, ``gateway status``, and
+    ``get_connected_platforms()``.
+
+    It MUST return True based on credentials, NOT on runtime connection state.
+    The gateway queries this before ever calling connect().
+
+    Accepts optional *config* (a PlatformConfig or dict) for compatibility with
+    the ``GatewayConfig._is_platform_connected()`` signature.
+    """
+    extra = getattr(config, "extra", {}) or {} if config else {}
+    env = os.environ
+
+    has_client_id = bool(env.get("M365_MAIL_CLIENT_ID") or extra.get("client_id"))
+    has_client_secret = bool(env.get("M365_MAIL_CLIENT_SECRET") or extra.get("client_secret"))
+    has_tenant_id = bool(env.get("M365_MAIL_TENANT_ID") or extra.get("tenant_id"))
+    has_mailbox = bool(env.get("M365_MAILBOX_USER") or extra.get("mailbox_user"))
+
+    return has_client_id and has_client_secret and has_tenant_id and has_mailbox
+
+
+def check_requirements() -> bool:
+    """Dependency / pre-flight check — True when minimal env vars are present.
+
+    Hermes calls this as the ``check_fn`` registered via ``ctx.register_platform()``.
+    It is the FIRST gate: if it returns False the platform is skipped entirely.
+
+    Difference from validate_config():
+    - check_requirements()  →  "Are the deps / env vars present?"
+    - validate_config()     →  "Does the full PlatformConfig look valid?"
+    """
+    env = os.environ
+    missing = [k for k in MINIMAL_ENV_VARS if env.get(k) is None]
+    return len(missing) == 0
 
 
 def env_enablement(_: object | None = None) -> dict[str, object] | None:
-    """Seed PlatformConfig.extra from env vars. Return None when not minimally configured."""
-    for key in REQUIRED_ENV_VARS:
-        if os.environ.get(key) is None:
-            return None
-    seed: dict[str, object] = {}
-    mailbox = os.environ.get("M365_MAILBOX_USER")
-    if mailbox:
-        seed["mailbox_user"] = mailbox
+    """Seed PlatformConfig.extra from env vars.  Return None when not minimally configured.
+
+    Called by the Hermes platform registry during ``load_gateway_config()``.
+    If this returns ``None``, the platform is marked "not configured" and
+    will not appear in the gateway's platform list.
+
+    The returned dict becomes ``PlatformConfig.extra``, which validate_config()
+    and is_connected_fn() read as fallback when env vars are absent.
+    """
+    client_id = os.environ.get("M365_MAIL_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("M365_MAIL_CLIENT_SECRET", "").strip()
+    tenant_id = os.environ.get("M365_MAIL_TENANT_ID", "").strip()
+    mailbox = os.environ.get("M365_MAILBOX_USER", "").strip()
+    if not (client_id and client_secret and tenant_id and mailbox):
+        return None
+    seed: dict[str, object] = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "tenant_id": tenant_id,
+        "mailbox_user": mailbox,
+    }
     allowed = os.environ.get("EMAIL_ALLOWED_USERS")
     if allowed is not None:
         seed["allowed_users"] = allowed
     return seed
 
 
-def validate_config(config: dict[str, object] | None = None) -> bool:
-    """Return True if required environment variables are present."""
-    _ = config
+def validate_config(config: object | None = None) -> bool:
+    """Validate that required credentials are present in env or config.extra.
+
+    Hermes calls this AFTER check_requirements() and BEFORE connect().
+    It receives the same ``PlatformConfig`` that will be passed to the
+    adapter_factory, so it can inspect ``config.extra`` as well as env vars.
+
+    This should be a superset of what is_connected_fn() checks — if the
+    platform appears "configured" (is_connected_fn True), validate_config
+    should also pass unless there is a structural error in the config.
+    """
+    extra = getattr(config, "extra", {}) or {} if config else {}
     env = os.environ
-    missing = [k for k in REQUIRED_ENV_VARS if env.get(k) is None]
-    return len(missing) == 0
+
+    has_client_id = bool(env.get("M365_MAIL_CLIENT_ID") or extra.get("client_id"))
+    has_client_secret = bool(env.get("M365_MAIL_CLIENT_SECRET") or extra.get("client_secret"))
+    has_tenant_id = bool(env.get("M365_MAIL_TENANT_ID") or extra.get("tenant_id"))
+    has_mailbox = bool(env.get("M365_MAILBOX_USER") or extra.get("mailbox_user"))
+
+    return has_client_id and has_client_secret and has_tenant_id and has_mailbox
 
 
 def interactive_setup() -> None:
@@ -565,7 +674,7 @@ def register(ctx):
         name="m365_email",
         label="M365 Email",
         adapter_factory=M365EmailAdapter,
-        check_fn=check_connected,
+        check_fn=check_requirements,
         validate_config=validate_config,
         is_connected=is_connected_fn,
         required_env=[

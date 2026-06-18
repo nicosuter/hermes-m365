@@ -1,13 +1,15 @@
-"""Test package init — mocks gateway modules before adapter imports."""
-
 import sys
 from unittest.mock import MagicMock
 
-# Build mock gateway module tree
 _gateway = MagicMock()
 _gateway.platforms = MagicMock()
 _gateway.platforms.base = MagicMock()
 _gateway.config = MagicMock()
+
+sys.modules["gateway"] = _gateway
+sys.modules["gateway.platforms"] = _gateway.platforms
+sys.modules["gateway.platforms.base"] = _gateway.platforms.base
+sys.modules["gateway.config"] = _gateway.config
 
 
 class MockBasePlatformAdapter:
@@ -82,8 +84,3 @@ _gateway.platforms.base.MessageEvent = MockMessageEvent
 _gateway.platforms.base.MessageType = MockMessageType
 _gateway.platforms.base.SendResult = MockSendResult
 _gateway.config.Platform = lambda name: type("Platform", (), {"value": name})()
-
-sys.modules["gateway"] = _gateway
-sys.modules["gateway.platforms"] = _gateway.platforms
-sys.modules["gateway.platforms.base"] = _gateway.platforms.base
-sys.modules["gateway.config"] = _gateway.config

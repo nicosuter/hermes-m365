@@ -519,7 +519,7 @@ async def test_watermark_does_not_skip_newer_messages_in_same_poll(env, state_pa
 @pytest.mark.asyncio
 @respx.mock
 async def test_connection_callbacks_return_true_after_connect(env, state_path):
-    """BUG 3 fix: check_connected() and is_connected_fn() must reflect actual state."""
+    """BUG 3 fix: check_connected() tracks runtime state; is_connected_fn() checks config."""
     _mock_token()
     env.setenv("M365_EMAIL_STATE_PATH", str(state_path))
 
@@ -527,7 +527,8 @@ async def test_connection_callbacks_return_true_after_connect(env, state_path):
 
     adapter = M365EmailAdapter()
     assert check_connected() is False
-    assert is_connected_fn() is False
+    # With env vars set via fixture, is_connected_fn should see configuration
+    assert is_connected_fn() is True
 
     await adapter.connect()
     assert check_connected() is True
@@ -535,7 +536,30 @@ async def test_connection_callbacks_return_true_after_connect(env, state_path):
 
     await adapter.disconnect()
     assert check_connected() is False
-    assert is_connected_fn() is False
+    # is_connected_fn reflects config, not runtime connection state
+    assert is_connected_fn() is True
+
+
+def test_check_requirements_returns_true_when_env_set(env):
+    """check_requirements() must succeed when env is configured, without connect()."""
+    _ = env
+    from adapter import check_requirements
+
+    assert check_requirements() is True
+
+
+def test_check_requirements_returns_false_when_env_missing(monkeypatch):
+    """check_requirements() must fail when required env vars are absent."""
+    import os
+    monkeypatch.delenv("M365_MAIL_CLIENT_ID", raising=False)
+    monkeypatch.delenv("M365_MAIL_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("M365_MAIL_TENANT_ID", raising=False)
+    monkeypatch.delenv("M365_MAILBOX_USER", raising=False)
+    monkeypatch.delenv("EMAIL_ALLOWED_USERS", raising=False)
+
+    from adapter import check_requirements
+
+    assert check_requirements() is False
 
 
 # ── Send Email Confirmation Gate Tests ──────────────────────────────────────

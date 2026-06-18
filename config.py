@@ -1,3 +1,4 @@
+# pyright: reportMissingImports=false
 """Configuration for the M365 Email Hermes plugin."""
 
 from __future__ import annotations
@@ -6,8 +7,6 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-
-from dotenv import load_dotenv
 
 
 DEFAULT_ATTACHMENT_MAX_BYTES = 10_485_760
@@ -72,12 +71,13 @@ class MailConfig:
 
 
 def project_root_from_module() -> Path:
-    """Return the plugin project root containing the package directory."""
-    return Path(__file__).resolve().parents[1]
+    """Return the plugin project root (flat layout: module sits at root)."""
+    return Path(__file__).resolve().parent
 
 
 def load_project_dotenv(project_root: Path | None = None) -> None:
     """Load .env from the project root without overriding existing process env."""
+    from dotenv import load_dotenv  # lazy: upstream usually handles env
     root = project_root or project_root_from_module()
     _ = load_dotenv(root / ".env", override=False)
 
