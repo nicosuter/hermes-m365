@@ -422,26 +422,30 @@ async def _tool_call(func: Callable[..., Any], **kwargs: Any) -> Any:
         return await func(config=config, client=client, **kwargs)
 
 
-async def list_mail_wrapper(*, unreadOnly: bool, top: int = 50, filter: str | None = None) -> dict[str, object]:
+async def list_mail_wrapper(*, unreadOnly: bool, top: int = 50, filter: str | None = None, **kwargs: Any) -> dict[str, object]:
+    _ = kwargs
     from mail_tools import list_mail
 
     items = await _tool_call(list_mail, unreadOnly=unreadOnly, top=top, filter=filter)
     return {"count": len(items), "emails": items}
 
 
-async def get_email_wrapper(*, email_id: str) -> dict[str, object]:
+async def get_email_wrapper(*, email_id: str, **kwargs: Any) -> dict[str, object]:
+    _ = kwargs
     from mail_tools import get_email
 
     return await _tool_call(get_email, email_id=email_id)
 
 
-async def get_attachment_wrapper(*, email_id: str, attachment_id: str) -> dict[str, object]:
+async def get_attachment_wrapper(*, email_id: str, attachment_id: str, **kwargs: Any) -> dict[str, object]:
+    _ = kwargs
     from mail_tools import get_attachment
 
     return await _tool_call(get_attachment, email_id=email_id, attachment_id=attachment_id)
 
 
-async def send_email_wrapper(*, to: str, subject: str, body: str, reply_to: str | None = None) -> dict[str, object]:
+async def send_email_wrapper(*, to: str, subject: str, body: str, reply_to: str | None = None, **kwargs: Any) -> dict[str, object]:
+    _ = kwargs
     if _is_confirmation_disabled():
         return await _tool_call(send_email, to=to, subject=subject, body=body, reply_to=reply_to)
 
@@ -468,23 +472,28 @@ async def _confirm_operation(*, confirmation_token: str, operation: str) -> dict
     return await _tool_call(func, **kwargs)
 
 
-async def confirm_send_email_wrapper(*, confirmation_token: str) -> dict[str, object]:
+async def confirm_send_email_wrapper(*, confirmation_token: str, **kwargs: Any) -> dict[str, object]:
+    _ = kwargs
     return await _confirm_operation(confirmation_token=confirmation_token, operation="send_email")
 
 
-async def confirm_reply_email_wrapper(*, confirmation_token: str) -> dict[str, object]:
+async def confirm_reply_email_wrapper(*, confirmation_token: str, **kwargs: Any) -> dict[str, object]:
+    _ = kwargs
     return await _confirm_operation(confirmation_token=confirmation_token, operation="reply_email")
 
 
-async def confirm_reply_all_wrapper(*, confirmation_token: str) -> dict[str, object]:
+async def confirm_reply_all_wrapper(*, confirmation_token: str, **kwargs: Any) -> dict[str, object]:
+    _ = kwargs
     return await _confirm_operation(confirmation_token=confirmation_token, operation="reply_all")
 
 
-async def confirm_forward_email_wrapper(*, confirmation_token: str) -> dict[str, object]:
+async def confirm_forward_email_wrapper(*, confirmation_token: str, **kwargs: Any) -> dict[str, object]:
+    _ = kwargs
     return await _confirm_operation(confirmation_token=confirmation_token, operation="forward_email")
 
 
-async def reply_email_wrapper(*, email_id: str, body: str) -> dict[str, object]:
+async def reply_email_wrapper(*, email_id: str, body: str, **kwargs: Any) -> dict[str, object]:
+    _ = kwargs
     if _is_confirmation_disabled():
         return await _tool_call(reply_email, email_id=email_id, body=body)
 
@@ -496,7 +505,8 @@ async def reply_email_wrapper(*, email_id: str, body: str) -> dict[str, object]:
     }
 
 
-async def reply_all_wrapper(*, email_id: str, body: str) -> dict[str, object]:
+async def reply_all_wrapper(*, email_id: str, body: str, **kwargs: Any) -> dict[str, object]:
+    _ = kwargs
     if _is_confirmation_disabled():
         return await _tool_call(reply_all, email_id=email_id, body=body)
 
@@ -508,7 +518,8 @@ async def reply_all_wrapper(*, email_id: str, body: str) -> dict[str, object]:
     }
 
 
-async def forward_email_wrapper(*, email_id: str, to: str, body: str) -> dict[str, object]:
+async def forward_email_wrapper(*, email_id: str, to: str, body: str, **kwargs: Any) -> dict[str, object]:
+    _ = kwargs
     if _is_confirmation_disabled():
         return await _tool_call(forward_email, email_id=email_id, to=to, body=body)
 
@@ -520,13 +531,15 @@ async def forward_email_wrapper(*, email_id: str, to: str, body: str) -> dict[st
     }
 
 
-async def mark_read_wrapper(*, email_id: str) -> dict[str, object]:
+async def mark_read_wrapper(*, email_id: str, **kwargs: Any) -> dict[str, object]:
+    _ = kwargs
     from mail_tools import mark_read
 
     return await _tool_call(mark_read, email_id=email_id)
 
 
-async def mark_unread_wrapper(*, email_id: str) -> dict[str, object]:
+async def mark_unread_wrapper(*, email_id: str, **kwargs: Any) -> dict[str, object]:
+    _ = kwargs
     from mail_tools import mark_unread
 
     return await _tool_call(mark_unread, email_id=email_id)
