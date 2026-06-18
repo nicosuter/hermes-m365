@@ -98,3 +98,11 @@ platforms:
 ```
 
 Then restart: `hermes gateway restart`
+
+## Troubleshooting & Learnings
+
+### Tool Registration
+
+- **No `tools` shadowing:** Our module is `mail_tools.py`. Upstream Hermes has a `tools` package at `~/.hermes/hermes-agent/tools/`. We import FROM upstream (`from tools.lazy_deps import ensure`), so naming is fine.
+- **Registration flow:** `__init__.py` → `adapter.register(ctx)` → `ctx.register_tool(toolset="m365_email", name=..., handler=...)` → upstream `tools.registry.ToolRegistry`.
+- **`handler=` is required (BLOCKING):** Every `ctx.register_tool()` call MUST include the `handler=` keyword argument. Missing it causes `PluginContext.register_tool() missing 1 required positional argument: 'handler'` and the entire plugin fails to load — zero tools get registered. This has broken the plugin in the past.
