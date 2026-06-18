@@ -422,13 +422,12 @@ async def _tool_call(func: Callable[..., Any], **kwargs: Any) -> Any:
         return await func(config=config, client=client, **kwargs)
 
 
-async def list_mail_wrapper(_: Any = None, *, top: int = 25, filter: str | None = None, **kwargs: Any) -> dict[str, object]:
+async def list_mail_wrapper(_: Any = None, *, top: int = 25, filter: str | None = None, **kwargs: Any) -> list[dict[str, object]]:
     from mail_tools import list_mail
 
     unread_only_val = kwargs.pop("unreadOnly", kwargs.pop("unread_only", True))
 
-    items = await _tool_call(list_mail, unreadOnly=unread_only_val, top=top, filter=filter)
-    return {"count": len(items), "emails": items}
+    return await _tool_call(list_mail, unreadOnly=unread_only_val, top=top, filter=filter)
 
 
 async def get_email_wrapper(_: Any = None, *, email_id: str, **kwargs: Any) -> dict[str, object]:
