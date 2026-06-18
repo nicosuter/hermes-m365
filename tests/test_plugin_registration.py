@@ -8,6 +8,9 @@ from pathlib import Path
 import pytest
 
 
+from typing import Callable
+
+
 # ── Fake context ───────────────────────────────────────────────────────────
 
 class FakeContext:
@@ -20,8 +23,15 @@ class FakeContext:
     def register_platform(self, **kwargs: object) -> None:
         self.platform_kwargs = kwargs
 
-    def register_tool(self, name: str, description: str, handler: object) -> None:
-        self.tools.append((name, handler, description))
+    def register_tool(
+        self,
+        name: str,
+        toolset: str,
+        schema: dict,
+        handler: Callable,
+        **kwargs: object,
+    ) -> None:
+        self.tools.append((name, handler, schema.get("description", "")))
 
 
 # ── Plugin YAML tests ──────────────────────────────────────────────────────

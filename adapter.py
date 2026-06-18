@@ -555,33 +555,235 @@ def register(ctx):
         install_hint="pip install m365-email-hermes-plugin",
         setup_fn=interactive_setup,
     )
-    ctx.register_tool("list_mail", "List recent emails in inbox", list_mail_wrapper)
-    ctx.register_tool("get_email", "Get email by ID", get_email_wrapper)
-    ctx.register_tool("get_attachment", "Download email attachment", get_attachment_wrapper)
-    ctx.register_tool("send_email", "Send an email", send_email_wrapper)
-    ctx.register_tool("reply_email", "Reply to an email", reply_email_wrapper)
-    ctx.register_tool("reply_all", "Reply all to an email", reply_all_wrapper)
-    ctx.register_tool("forward_email", "Forward an email", forward_email_wrapper)
-    ctx.register_tool("mark_read", "Mark an email as read", mark_read_wrapper)
-    ctx.register_tool("mark_unread", "Mark an email as unread", mark_unread_wrapper)
+    ctx.register_tool(
+        name="list_mail",
+        toolset="m365_email",
+        schema={
+            "name": "list_mail",
+            "description": "List recent emails in inbox",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "unreadOnly": {"type": "boolean"},
+                    "top": {"type": "integer", "default": 50},
+                    "filter": {"type": "string"},
+                },
+                "required": ["unreadOnly"],
+            },
+        },
+        handler=list_mail_wrapper,
+        is_async=True,
+    )
+    ctx.register_tool(
+        name="get_email",
+        toolset="m365_email",
+        schema={
+            "name": "get_email",
+            "description": "Get email by ID",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email_id": {"type": "string"},
+                },
+                "required": ["email_id"],
+            },
+        },
+        handler=get_email_wrapper,
+        is_async=True,
+    )
+    ctx.register_tool(
+        name="get_attachment",
+        toolset="m365_email",
+        schema={
+            "name": "get_attachment",
+            "description": "Download email attachment",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email_id": {"type": "string"},
+                    "attachment_id": {"type": "string"},
+                },
+                "required": ["email_id", "attachment_id"],
+            },
+        },
+        handler=get_attachment_wrapper,
+        is_async=True,
+    )
+    ctx.register_tool(
+        name="send_email",
+        toolset="m365_email",
+        schema={
+            "name": "send_email",
+            "description": "Send an email",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "to": {"type": "string"},
+                    "subject": {"type": "string"},
+                    "body": {"type": "string"},
+                    "reply_to": {"type": "string"},
+                },
+                "required": ["to", "subject", "body"],
+            },
+        },
+        handler=send_email_wrapper,
+        is_async=True,
+    )
+    ctx.register_tool(
+        name="reply_email",
+        toolset="m365_email",
+        schema={
+            "name": "reply_email",
+            "description": "Reply to an email",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email_id": {"type": "string"},
+                    "body": {"type": "string"},
+                },
+                "required": ["email_id", "body"],
+            },
+        },
+        handler=reply_email_wrapper,
+        is_async=True,
+    )
+    ctx.register_tool(
+        name="reply_all",
+        toolset="m365_email",
+        schema={
+            "name": "reply_all",
+            "description": "Reply all to an email",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email_id": {"type": "string"},
+                    "body": {"type": "string"},
+                },
+                "required": ["email_id", "body"],
+            },
+        },
+        handler=reply_all_wrapper,
+        is_async=True,
+    )
+    ctx.register_tool(
+        name="forward_email",
+        toolset="m365_email",
+        schema={
+            "name": "forward_email",
+            "description": "Forward an email",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email_id": {"type": "string"},
+                    "to": {"type": "string"},
+                    "body": {"type": "string"},
+                },
+                "required": ["email_id", "to", "body"],
+            },
+        },
+        handler=forward_email_wrapper,
+        is_async=True,
+    )
+    ctx.register_tool(
+        name="mark_read",
+        toolset="m365_email",
+        schema={
+            "name": "mark_read",
+            "description": "Mark an email as read",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email_id": {"type": "string"},
+                },
+                "required": ["email_id"],
+            },
+        },
+        handler=mark_read_wrapper,
+        is_async=True,
+    )
+    ctx.register_tool(
+        name="mark_unread",
+        toolset="m365_email",
+        schema={
+            "name": "mark_unread",
+            "description": "Mark an email as unread",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email_id": {"type": "string"},
+                },
+                "required": ["email_id"],
+            },
+        },
+        handler=mark_unread_wrapper,
+        is_async=True,
+    )
     if not _is_confirmation_disabled():
         ctx.register_tool(
-            "confirm_send_email",
-            "Confirm sending an email after review token",
-            confirm_send_email_wrapper,
+            name="confirm_send_email",
+            toolset="m365_email",
+            schema={
+                "name": "confirm_send_email",
+                "description": "Confirm sending an email after review token",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "confirmation_token": {"type": "string"},
+                    },
+                    "required": ["confirmation_token"],
+                },
+            },
+            handler=confirm_send_email_wrapper,
+            is_async=True,
         )
         ctx.register_tool(
-            "confirm_reply_email",
-            "Confirm replying to an email after review token",
-            confirm_reply_email_wrapper,
+            name="confirm_reply_email",
+            toolset="m365_email",
+            schema={
+                "name": "confirm_reply_email",
+                "description": "Confirm replying to an email after review token",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "confirmation_token": {"type": "string"},
+                    },
+                    "required": ["confirmation_token"],
+                },
+            },
+            handler=confirm_reply_email_wrapper,
+            is_async=True,
         )
         ctx.register_tool(
-            "confirm_reply_all",
-            "Confirm reply-all to an email after review token",
-            confirm_reply_all_wrapper,
+            name="confirm_reply_all",
+            toolset="m365_email",
+            schema={
+                "name": "confirm_reply_all",
+                "description": "Confirm reply-all to an email after review token",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "confirmation_token": {"type": "string"},
+                    },
+                    "required": ["confirmation_token"],
+                },
+            },
+            handler=confirm_reply_all_wrapper,
+            is_async=True,
         )
         ctx.register_tool(
-            "confirm_forward_email",
-            "Confirm forwarding an email after review token",
-            confirm_forward_email_wrapper,
+            name="confirm_forward_email",
+            toolset="m365_email",
+            schema={
+                "name": "confirm_forward_email",
+                "description": "Confirm forwarding an email after review token",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "confirmation_token": {"type": "string"},
+                    },
+                    "required": ["confirmation_token"],
+                },
+            },
+            handler=confirm_forward_email_wrapper,
+            is_async=True,
         )
