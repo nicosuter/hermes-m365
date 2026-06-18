@@ -555,33 +555,33 @@ def register(ctx):
         install_hint="pip install m365-email-hermes-plugin",
         setup_fn=interactive_setup,
     )
-    ctx.register_tool("list_mail", list_mail_wrapper, "List recent emails in inbox")
-    ctx.register_tool("get_email", get_email_wrapper, "Get email by ID")
-    ctx.register_tool("get_attachment", get_attachment_wrapper, "Download email attachment")
-    ctx.register_tool("send_email", send_email_wrapper, "Send an email")
-    ctx.register_tool("reply_email", reply_email_wrapper, "Reply to an email")
-    ctx.register_tool("reply_all", reply_all_wrapper, "Reply all to an email")
-    ctx.register_tool("forward_email", forward_email_wrapper, "Forward an email")
-    ctx.register_tool("mark_read", mark_read_wrapper, "Mark an email as read")
-    ctx.register_tool("mark_unread", mark_unread_wrapper, "Mark an email as unread")
+    ctx.register_tool("list_mail", "List recent emails in inbox", list_mail_wrapper)
+    ctx.register_tool("get_email", "Get email by ID", get_email_wrapper)
+    ctx.register_tool("get_attachment", "Download email attachment", get_attachment_wrapper)
+    ctx.register_tool("send_email", "Send an email", send_email_wrapper)
+    ctx.register_tool("reply_email", "Reply to an email", reply_email_wrapper)
+    ctx.register_tool("reply_all", "Reply all to an email", reply_all_wrapper)
+    ctx.register_tool("forward_email", "Forward an email", forward_email_wrapper)
+    ctx.register_tool("mark_read", "Mark an email as read", mark_read_wrapper)
+    ctx.register_tool("mark_unread", "Mark an email as unread", mark_unread_wrapper)
     if not _is_confirmation_disabled():
         ctx.register_tool(
             "confirm_send_email",
-            confirm_send_email_wrapper,
             "Confirm sending an email after review token",
+            confirm_send_email_wrapper,
         )
         ctx.register_tool(
             "confirm_reply_email",
-            confirm_reply_email_wrapper,
             "Confirm replying to an email after review token",
+            confirm_reply_email_wrapper,
         )
         ctx.register_tool(
             "confirm_reply_all",
-            confirm_reply_all_wrapper,
             "Confirm reply-all to an email after review token",
+            confirm_reply_all_wrapper,
         )
         ctx.register_tool(
             "confirm_forward_email",
-            confirm_forward_email_wrapper,
             "Confirm forwarding an email after review token",
+            confirm_forward_email_wrapper,
         )

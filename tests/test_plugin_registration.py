@@ -20,7 +20,7 @@ class FakeContext:
     def register_platform(self, **kwargs: object) -> None:
         self.platform_kwargs = kwargs
 
-    def register_tool(self, name: str, handler: object, description: str) -> None:
+    def register_tool(self, name: str, description: str, handler: object) -> None:
         self.tools.append((name, handler, description))
 
 
