@@ -1,4 +1,4 @@
-"""Tests for plugin registration (plugin.yaml + adapter.py)."""
+"""Tests for plugin registration (plugin.yaml + adapter.py) and Hermes contract compliance."""
 
 from __future__ import annotations
 
@@ -6,8 +6,6 @@ import os
 from pathlib import Path
 
 import pytest
-
-from config import MailConfigError
 
 
 # ── Fake context ───────────────────────────────────────────────────────────
@@ -106,7 +104,7 @@ class TestAdapterRegistration:
 # ── Validation tests ───────────────────────────────────────────────────────
 
 class TestValidateConfig:
-    def test_fails_when_client_secret_missing(self) -> None:
+    def test_returns_false_when_client_secret_missing(self) -> None:
         from adapter import validate_config
 
         env_patch = {
@@ -114,10 +112,9 @@ class TestValidateConfig:
             "M365_MAIL_TENANT_ID": "ok",
         }
         with patch_environ(env_patch, clear_required=True):
-            with pytest.raises(MailConfigError, match="M365_MAIL_CLIENT_SECRET"):
-                validate_config()
+            assert validate_config() is False
 
-    def test_succeeds_when_all_required_present(self) -> None:
+    def test_returns_true_when_all_required_present(self) -> None:
         from adapter import validate_config
 
         env_patch = {
@@ -128,7 +125,83 @@ class TestValidateConfig:
             "EMAIL_ALLOWED_USERS": "trusted@example.com",
         }
         with patch_environ(env_patch, clear_required=False):
-            validate_config()  # no exception
+            assert validate_config() is True
+
+
+# ── Hermes Contract Tests ──────────────────────────────────────────────────
+
+class TestHermesContract:
+    def test_adapter_extends_base_platform_adapter(self) -> None:
+        from adapter import M365EmailAdapter
+        from gateway.platforms.base import BasePlatformAdapter
+
+        assert issubclass(M365EmailAdapter, BasePlatformAdapter)
+
+    def test_adapter_implements_connect_disconnect_send(self) -> None:
+        from adapter import M365EmailAdapter
+
+        assert hasattr(M365EmailAdapter, "connect")
+        assert hasattr(M365EmailAdapter, "disconnect")
+        assert hasattr(M365EmailAdapter, "send")
+        assert hasattr(M365EmailAdapter, "get_chat_info")
+
+    def test_register_uses_singular_allowed_users_env(self) -> None:
+        from adapter import register
+
+        ctx = FakeContext()
+        register(ctx)
+        assert ctx.platform_kwargs is not None
+        assert "allowed_users_env" in ctx.platform_kwargs
+        assert ctx.platform_kwargs["allowed_users_env"] == "EMAIL_ALLOWED_USERS"
+        assert "allowed_users_envs" not in ctx.platform_kwargs
+
+    def test_register_includes_emoji_and_allow_update_command(self) -> None:
+        from adapter import register
+
+        ctx = FakeContext()
+        register(ctx)
+        assert ctx.platform_kwargs is not None
+        assert ctx.platform_kwargs.get("emoji") == "📧"
+        assert ctx.platform_kwargs.get("allow_update_command") is True
+
+    def test_env_enablement_returns_none_when_not_configured(self) -> None:
+        from adapter import env_enablement
+
+        assert env_enablement() is None
+
+    def test_env_enablement_returns_dict_when_configured(self, monkeypatch) -> None:
+        from adapter import env_enablement
+
+        for key in (
+            "M365_MAIL_CLIENT_ID",
+            "M365_MAIL_CLIENT_SECRET",
+            "M365_MAIL_TENANT_ID",
+            "M365_MAILBOX_USER",
+            "EMAIL_ALLOWED_USERS",
+        ):
+            monkeypatch.setenv(key, "ok")
+
+        result = env_enablement()
+        assert isinstance(result, dict)
+
+    def test_adapter_has_base_class_lifecycle_methods(self) -> None:
+        from adapter import M365EmailAdapter
+        from gateway.platforms.base import BasePlatformAdapter
+
+        adapter = M365EmailAdapter()
+        assert hasattr(adapter, "_mark_connected")
+        assert hasattr(adapter, "_mark_disconnected")
+        assert hasattr(adapter, "handle_message")
+
+    def test_send_returns_send_result(self) -> None:
+        from adapter import M365EmailAdapter
+        from gateway.platforms.base import SendResult
+
+        adapter = M365EmailAdapter()
+        import asyncio
+        result = asyncio.run(adapter.send("m365:test@example.com", "hello"))
+        assert isinstance(result, SendResult)
+        assert hasattr(result, "success")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+# pyright: reportMissingImports=false
 """M365 Email adapter registration for Hermes gateway."""
 
 from __future__ import annotations
@@ -14,6 +15,9 @@ from graph import GraphClient
 from mail_tools import forward_email, reply_all, reply_email, send_email
 from sanitize import sanitize_html_body
 from state import PollState
+
+from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType, SendResult
+from gateway.config import Platform
 
 logger = logging.getLogger(__name__)
 
@@ -63,27 +67,21 @@ def _store_pending_token(operation: str, **kwargs: Any) -> str:
 
 # ── M365 Email Adapter ─────────────────────────────────────────────────────
 
-class M365EmailAdapter:
+class M365EmailAdapter(BasePlatformAdapter):
     """Platform adapter for M365 Email with full Hermes lifecycle."""
 
-    def __init__(self, config: dict[str, object] | None = None) -> None:
-        self._config = config or {}
-        self._connected = False
+    def __init__(self, config: object | None = None) -> None:
+        super().__init__(config or {}, Platform("m365_email"))
         self._poll_task: asyncio.Task[None] | None = None
         self._mail_config: MailConfig | None = None
         self._client: GraphClient | None = None
-        self._handle_message: Callable[[dict[str, Any]], Any] | None = None
         self._poll_interval: float = 30.0
 
     # -- Hermes lifecycle hooks ------------------------------------------------
 
-    def set_handle_message(self, handler: Callable[[dict[str, Any]], Any]) -> None:
-        """Set the handle_message callback (injected by Hermes gateway)."""
-        self._handle_message = handler
-
     async def connect(self) -> bool:
         """Mark connected, initialize GraphClient, start polling task."""
-        if self._connected:
+        if self.is_connected:
             return True
 
         try:
@@ -100,7 +98,7 @@ class M365EmailAdapter:
                 pass
 
         self._client = GraphClient(self._mail_config)
-        self._connected = True
+        self._mark_connected()
         global _is_connected
         _is_connected = True
         self._poll_task = asyncio.create_task(self._poll_loop())
@@ -109,29 +107,32 @@ class M365EmailAdapter:
 
     async def disconnect(self) -> None:
         """Cancel polling task, close client, mark disconnected."""
-        self._connected = False
-        global _is_connected
-        _is_connected = False
-        if self._poll_task is not None:
-            self._poll_task.cancel()
-            try:
-                await self._poll_task
-            except asyncio.CancelledError:
-                pass
-            self._poll_task = None
+        if self.is_connected:
+            self._mark_disconnected()
+            global _is_connected
+            _is_connected = False
+            if self._poll_task is not None:
+                self._poll_task.cancel()
+                try:
+                    await self._poll_task
+                except asyncio.CancelledError:
+                    pass
+                self._poll_task = None
 
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
-        logger.info("M365EmailAdapter disconnected")
-
-    @property
-    def is_connected(self) -> bool:
-        return self._connected
+            if self._client is not None:
+                await self._client.aclose()
+                self._client = None
+            logger.info("M365EmailAdapter disconnected")
 
     # -- Hermes send / chat_info -----------------------------------------------
 
-    async def send(self, chat_id: str, content: str, reply_to: str | None = None, metadata: dict[str, object] | None = None) -> bool:
+    async def send(
+        self,
+        chat_id: str,
+        content: str,
+        reply_to: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> SendResult:
         """Send email via Graph sendMail.
 
         Args:
@@ -140,9 +141,9 @@ class M365EmailAdapter:
             reply_to: optional reply-to message ID
             metadata: optional dict with "subject", "thread_subject", etc.
         """
-        if not self._connected or self._client is None or self._mail_config is None:
+        if not self.is_connected or self._client is None or self._mail_config is None:
             logger.error("Cannot send: adapter not connected")
-            return False
+            return SendResult(success=False)
 
         # Determine recipient
         if chat_id.startswith("m365:"):
@@ -170,10 +171,10 @@ class M365EmailAdapter:
                 body=content,
                 reply_to=reply_to or self._mail_config.mailbox_user,
             )
-            return bool(result.get("success", False))
+            return SendResult(success=bool(result.get("success", False)))
         except Exception as exc:
             logger.error("Failed to send email to %s: %s", recipient, exc)
-            return False
+            return SendResult(success=False)
 
     def get_chat_info(self, chat_id: str) -> dict[str, object]:
         """Return chat info for a given chat_id."""
@@ -264,29 +265,22 @@ class M365EmailAdapter:
             chat_name = sender_name if sender_name else sender_address
             user_name = sender_name if sender_name else sender_address
 
-            event = {
-                "text": text,
-                "message_type": "email",
-                "source": {
-                    "platform": "m365_email",
-                    "chat_id": chat_id,
-                    "chat_name": chat_name,
-                    "chat_type": "dm",
-                    "user_id": sender_address,
-                    "user_name": user_name,
-                },
-                "raw_message": msg,
-                "message_id": msg_id,
-                "media_urls": [],
-                "timestamp": received,
-                "graph_message_id": msg_id,
-                "conversation_id": str(msg.get("conversationId", "")),
-                "subject": str(msg.get("subject", "")),
-                "internetMessageId": str(msg.get("internetMessageId", "")),
-            }
+            source = self.build_source(
+                chat_id=chat_id,
+                chat_name=chat_name,
+                chat_type="dm",
+                user_id=sender_address,
+                user_name=user_name,
+            )
 
-            if self._handle_message:
-                await self._handle_message(event)
+            event = MessageEvent(
+                text=text,
+                message_type=getattr(MessageType, "EMAIL", MessageType.TEXT),
+                source=source,
+                message_id=msg_id,
+            )
+
+            await self.handle_message(event)
 
             state.add(msg_id, received)
 
@@ -310,20 +304,27 @@ def is_connected_fn() -> bool:
     return _is_connected
 
 
-def env_enablement(_: object | None = None) -> bool:
+def env_enablement(_: object | None = None) -> dict[str, object] | None:
+    """Seed PlatformConfig.extra from env vars. Return None when not minimally configured."""
     for key in REQUIRED_ENV_VARS:
         if os.environ.get(key) is None:
-            return False
-    return True
+            return None
+    seed: dict[str, object] = {}
+    mailbox = os.environ.get("M365_MAILBOX_USER")
+    if mailbox:
+        seed["mailbox_user"] = mailbox
+    allowed = os.environ.get("EMAIL_ALLOWED_USERS")
+    if allowed is not None:
+        seed["allowed_users"] = allowed
+    return seed
 
 
-def validate_config(config: dict[str, object] | None = None) -> None:
-    """Raise if required environment variables are missing."""
+def validate_config(config: dict[str, object] | None = None) -> bool:
+    """Return True if required environment variables are present."""
     _ = config
     env = os.environ
     missing = [k for k in REQUIRED_ENV_VARS if env.get(k) is None]
-    if missing:
-        raise MailConfigError(f"Missing required environment variables: {', '.join(missing)}")
+    return len(missing) == 0
 
 
 # ── Tool Wrappers ──────────────────────────────────────────────────────────
@@ -455,9 +456,11 @@ def register(ctx):
         is_connected=is_connected_fn,
         required_env=list(REQUIRED_ENV_VARS),
         env_enablement_fn=env_enablement,
-        allowed_users_envs=["EMAIL_ALLOWED_USERS"],
+        allowed_users_env="EMAIL_ALLOWED_USERS",
         max_message_length=32000,
         platform_hint="Send email to any address. Chat ID format: m365:recipient@example.com",
+        emoji="📧",
+        allow_update_command=True,
     )
     ctx.register_tool("list_mail", list_mail_wrapper, "List recent emails in inbox")
     ctx.register_tool("get_email", get_email_wrapper, "Get email by ID")

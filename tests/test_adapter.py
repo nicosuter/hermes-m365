@@ -44,16 +44,6 @@ def _make_message(msg_id: str, sender: str, name: str = "", subject: str = "Test
     }
 
 
-class FakeHandleMessage:
-    """Tracks calls to handle_message."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict] = []
-
-    async def __call__(self, event: dict) -> None:
-        self.calls.append(event)
-
-
 @pytest.fixture
 def env(monkeypatch):
     monkeypatch.setenv("M365_MAIL_CLIENT_ID", "client-id")
@@ -166,8 +156,10 @@ async def test_first_run_records_watermark_and_does_not_emit_old_messages(env, s
     from adapter import M365EmailAdapter
 
     adapter = M365EmailAdapter()
-    tracker = FakeHandleMessage()
-    adapter.set_handle_message(tracker)
+    tracker_calls: list[dict] = []
+    async def tracker(event: dict) -> None:
+        tracker_calls.append(event)
+    adapter.handle_message = tracker  # type: ignore[method-assign]
 
     old_msg = _make_message("msg-old", "trusted@example.com", "Trusted", received="2026-06-16T10:00:00Z")
     inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=50")).mock(
@@ -179,7 +171,7 @@ async def test_first_run_records_watermark_and_does_not_emit_old_messages(env, s
     await adapter.disconnect()
 
     assert inbox_route.called
-    assert len(tracker.calls) == 0
+    assert len(tracker_calls) == 0
 
     assert state_path.exists()
     saved = json.loads(state_path.read_text())
@@ -195,8 +187,10 @@ async def test_new_message_after_watermark_calls_handle_message(env, state_path)
     from adapter import M365EmailAdapter
 
     adapter = M365EmailAdapter()
-    tracker = FakeHandleMessage()
-    adapter.set_handle_message(tracker)
+    tracker_calls: list[dict] = []
+    async def tracker(event: dict) -> None:
+        tracker_calls.append(event)
+    adapter.handle_message = tracker  # type: ignore[method-assign]
 
     future_ts = (datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat()
     new_msg = _make_message(
@@ -215,13 +209,9 @@ async def test_new_message_after_watermark_calls_handle_message(env, state_path)
     await adapter.disconnect()
 
     assert inbox_route.called
-    assert len(tracker.calls) == 1
-    event = tracker.calls[0]
+    assert len(tracker_calls) == 1
+    event = tracker_calls[0]
     assert event["message_id"] == "msg-new"
-    assert event["graph_message_id"] == "msg-new"
-    assert event["subject"] == "Important"
-    assert event["conversation_id"] == "conv-42"
-    assert event["internetMessageId"] == "<urgent@example.com>"
     assert event["message_type"] == "email"
     assert event["source"]["chat_id"] == "m365:trusted@example.com"
     assert event["source"]["chat_name"] == "Trusted"
@@ -243,8 +233,10 @@ async def test_unallowed_sender_dropped(env, state_path):
     from adapter import M365EmailAdapter
 
     adapter = M365EmailAdapter()
-    tracker = FakeHandleMessage()
-    adapter.set_handle_message(tracker)
+    tracker_calls: list[dict] = []
+    async def tracker(event: dict) -> None:
+        tracker_calls.append(event)
+    adapter.handle_message = tracker  # type: ignore[method-assign]
 
     future_ts = (datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat()
     evil_msg = _make_message("msg-evil", "evil@example.com", "Evil",
@@ -259,7 +251,7 @@ async def test_unallowed_sender_dropped(env, state_path):
     await adapter.disconnect()
 
     assert inbox_route.called
-    assert len(tracker.calls) == 0
+    assert len(tracker_calls) == 0
 
 
 @pytest.mark.asyncio
@@ -272,8 +264,10 @@ async def test_empty_allowed_users_drops_all(env, state_path):
     from adapter import M365EmailAdapter
 
     adapter = M365EmailAdapter()
-    tracker = FakeHandleMessage()
-    adapter.set_handle_message(tracker)
+    tracker_calls: list[dict] = []
+    async def tracker(event: dict) -> None:
+        tracker_calls.append(event)
+    adapter.handle_message = tracker  # type: ignore[method-assign]
 
     future_ts = (datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat()
     msg = _make_message("msg-1", "anyone@example.com", "Anyone", received=future_ts)
@@ -286,7 +280,7 @@ async def test_empty_allowed_users_drops_all(env, state_path):
     await adapter.disconnect()
 
     assert inbox_route.called
-    assert len(tracker.calls) == 0
+    assert len(tracker_calls) == 0
 
 
 # ── Polling: Duplicate Suppression ────────────────────────────────────────
@@ -304,8 +298,10 @@ async def test_duplicate_message_id_skipped_after_state_persistence(env, state_p
     pre_state.save(state_path)
 
     adapter = M365EmailAdapter()
-    tracker = FakeHandleMessage()
-    adapter.set_handle_message(tracker)
+    tracker_calls: list[dict] = []
+    async def tracker(event: dict) -> None:
+        tracker_calls.append(event)
+    adapter.handle_message = tracker  # type: ignore[method-assign]
 
     msg = _make_message("msg-1", "trusted@example.com", "Trusted", received="2026-06-17T12:00:00Z")
     inbox_route = respx.get(_mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=50")).mock(
@@ -317,7 +313,7 @@ async def test_duplicate_message_id_skipped_after_state_persistence(env, state_p
     await adapter.disconnect()
 
     assert inbox_route.called
-    assert len(tracker.calls) == 0
+    assert len(tracker_calls) == 0
 
 
 # ── Send Tests ────────────────────────────────────────────────────────────
@@ -343,7 +339,7 @@ async def test_send_posts_graph_sendmail(env, state_path):
         metadata={"subject": "Hi"},
     )
 
-    assert result is True
+    assert result.success is True
     assert send_route.called
     payload = json.loads(send_route.calls.last.request.read().decode())
     assert payload["message"]["subject"] == "Hi"
@@ -413,7 +409,7 @@ async def test_send_returns_false_when_not_connected(env, state_path):
 
     adapter = M365EmailAdapter()
     result = await adapter.send("m365:test@example.com", "body")
-    assert result is False
+    assert result.success is False
 
 
 # ── get_chat_info Tests ───────────────────────────────────────────────────
@@ -449,8 +445,10 @@ async def test_polling_does_not_mark_mail_read(env, state_path):
     from adapter import M365EmailAdapter
 
     adapter = M365EmailAdapter()
-    tracker = FakeHandleMessage()
-    adapter.set_handle_message(tracker)
+    tracker_calls: list[dict] = []
+    async def tracker(event: dict) -> None:
+        tracker_calls.append(event)
+    adapter.handle_message = tracker  # type: ignore[method-assign]
 
     future_ts = (datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat()
     msg = _make_message("msg-1", "trusted@example.com", "Trusted", received=future_ts)
@@ -466,7 +464,7 @@ async def test_polling_does_not_mark_mail_read(env, state_path):
     await asyncio.sleep(0.3)
     await adapter.disconnect()
 
-    assert len(tracker.calls) == 1
+    assert len(tracker_calls) == 1
     assert not mark_read_route.called
 
 
@@ -486,8 +484,10 @@ async def test_watermark_does_not_skip_newer_messages_in_same_poll(env, state_pa
     from adapter import M365EmailAdapter
 
     adapter = M365EmailAdapter()
-    tracker = FakeHandleMessage()
-    adapter.set_handle_message(tracker)
+    tracker_calls: list[dict] = []
+    async def tracker(event: dict) -> None:
+        tracker_calls.append(event)
+    adapter.handle_message = tracker  # type: ignore[method-assign]
 
     # Messages in newest-first order (as Graph returns them)
     msg_newer = _make_message("msg-newer", "trusted@example.com", "Trusted",
@@ -509,8 +509,8 @@ async def test_watermark_does_not_skip_newer_messages_in_same_poll(env, state_pa
     await adapter.disconnect()
 
     assert inbox_route.called
-    assert len(tracker.calls) == 2
-    ids = {call["message_id"] for call in tracker.calls}
+    assert len(tracker_calls) == 2
+    ids = {call["message_id"] for call in tracker_calls}
     assert ids == {"msg-newer", "msg-older"}
 
 
