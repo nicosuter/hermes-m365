@@ -179,17 +179,35 @@ class M365EmailAdapter(BasePlatformAdapter):
 
         inbox_url = self._client.mail_url(f"mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top={self._mail_config.poll_top}")
 
+        consecutive_failures = 0
+
         while True:
             try:
                 await self._poll_once(inbox_url, state)
+                consecutive_failures = 0
             except asyncio.CancelledError:
                 logger.debug("Polling cancelled")
                 return
-            except Exception as exc:
-                logger.error("Poll error: %s", exc)
+            except Exception:
+                consecutive_failures += 1
+                if consecutive_failures >= 5:
+                    logger.exception(
+                        "Poll error (x%d consecutive). Disconnecting to avoid log spam.",
+                        consecutive_failures,
+                    )
+                    self._set_fatal_error(
+                        "poll_failure",
+                        f"Polling failed {consecutive_failures} times in a row",
+                        retryable=True,
+                    )
+                    await self.disconnect()
+                    return
+                logger.exception("Poll error (attempt %d)", consecutive_failures)
 
+            # Simple truncated exponential backoff
+            backoff = min(self._poll_interval * (2 ** max(0, consecutive_failures - 1)), 300.0)
             try:
-                await asyncio.sleep(self._poll_interval)
+                await asyncio.sleep(backoff)
             except asyncio.CancelledError:
                 logger.debug("Polling sleep cancelled")
                 return
