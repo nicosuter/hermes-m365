@@ -7,8 +7,11 @@ import asyncio
 import logging
 import os
 import secrets
+import sys
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
+
+import httpx
 
 from config import MailConfig, MailConfigError, is_allowed_sender, REQUIRED_ENV_VARS
 from graph import GraphClient
@@ -188,6 +191,22 @@ class M365EmailAdapter(BasePlatformAdapter):
             except asyncio.CancelledError:
                 logger.debug("Polling cancelled")
                 return
+            except httpx.ReadTimeout as exc:
+                consecutive_failures += 1
+                print(f"[M365 Email] Poll timed out ({exc.request.method} {exc.request.url}): {type(exc).__name__}", file=sys.stderr)
+                if consecutive_failures >= 5:
+                    logger.error(
+                        "Poll error (x%d consecutive, timeout). Disconnecting to avoid log spam.",
+                        consecutive_failures,
+                    )
+                    self._set_fatal_error(
+                        "poll_failure",
+                        f"Polling failed {consecutive_failures} times in a row (timeout)",
+                        retryable=True,
+                    )
+                    await self.disconnect()
+                    return
+                logger.warning("Poll error (attempt %d): timeout", consecutive_failures)
             except Exception:
                 consecutive_failures += 1
                 if consecutive_failures >= 5:

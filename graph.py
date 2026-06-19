@@ -15,6 +15,7 @@ from config import MailConfig
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 TOKEN_EXPIRY_SKEW_SECONDS = 60
+REQUEST_TIMEOUT = 10.0
 
 
 class GraphClient:
@@ -22,7 +23,7 @@ class GraphClient:
 
     def __init__(self, config: MailConfig, *, http_client: httpx.AsyncClient | None = None) -> None:
         self.config: MailConfig = config
-        self._client: httpx.AsyncClient = http_client or httpx.AsyncClient()
+        self._client: httpx.AsyncClient = http_client or httpx.AsyncClient(timeout=REQUEST_TIMEOUT)
         self._owns_client: bool = http_client is None
         self._access_token: str | None = None
         self._token_expires_at: float = 0.0
