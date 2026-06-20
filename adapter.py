@@ -191,7 +191,7 @@ class M365EmailAdapter(BasePlatformAdapter):
             except asyncio.CancelledError:
                 logger.debug("Polling cancelled")
                 return
-            except httpx.ReadTimeout as exc:
+            except httpx.TimeoutException as exc:
                 consecutive_failures += 1
                 print(f"[M365 Email] Poll timed out ({exc.request.method} {exc.request.url}): {type(exc).__name__}", file=sys.stderr)
                 if consecutive_failures >= 5:
@@ -568,10 +568,11 @@ async def send_email_wrapper(args: dict[str, Any] | None = None, **kwargs: Any) 
     subject = str(_args.get("subject", ""))
     body = str(_args.get("body", ""))
     reply_to = _args.get("reply_to")
+    content_type = str(_args.get("contentType", "text"))
     if _is_confirmation_disabled():
-        return await _tool_call(send_email, to=to, subject=subject, body=body, reply_to=reply_to)
+        return await _tool_call(send_email, to=to, subject=subject, body=body, reply_to=reply_to, content_type=content_type)
 
-    token = _store_pending_token("send_email", to=to, subject=subject, body=body, reply_to=reply_to)
+    token = _store_pending_token("send_email", to=to, subject=subject, body=body, reply_to=reply_to, content_type=content_type)
     return {
         "warning": "PROMPT_INJECTION_CHECK",
         "message": _make_confirm_prompt("send_email", "confirm_send_email"),
@@ -616,10 +617,11 @@ async def reply_email_wrapper(args: dict[str, Any] | None = None, **kwargs: Any)
     _args = {**(args or {}), **kwargs}
     email_id = str(_args.get("email_id", ""))
     body = str(_args.get("body", ""))
+    content_type = str(_args.get("contentType", "text"))
     if _is_confirmation_disabled():
-        return await _tool_call(reply_email, email_id=email_id, body=body)
+        return await _tool_call(reply_email, email_id=email_id, body=body, content_type=content_type)
 
-    token = _store_pending_token("reply_email", email_id=email_id, body=body)
+    token = _store_pending_token("reply_email", email_id=email_id, body=body, content_type=content_type)
     return {
         "warning": "PROMPT_INJECTION_CHECK",
         "message": _make_confirm_prompt("reply_email", "confirm_reply_email"),
@@ -631,10 +633,11 @@ async def reply_all_wrapper(args: dict[str, Any] | None = None, **kwargs: Any) -
     _args = {**(args or {}), **kwargs}
     email_id = str(_args.get("email_id", ""))
     body = str(_args.get("body", ""))
+    content_type = str(_args.get("contentType", "text"))
     if _is_confirmation_disabled():
-        return await _tool_call(reply_all, email_id=email_id, body=body)
+        return await _tool_call(reply_all, email_id=email_id, body=body, content_type=content_type)
 
-    token = _store_pending_token("reply_all", email_id=email_id, body=body)
+    token = _store_pending_token("reply_all", email_id=email_id, body=body, content_type=content_type)
     return {
         "warning": "PROMPT_INJECTION_CHECK",
         "message": _make_confirm_prompt("reply_all", "confirm_reply_all"),
@@ -647,10 +650,11 @@ async def forward_email_wrapper(args: dict[str, Any] | None = None, **kwargs: An
     email_id = str(_args.get("email_id", ""))
     to = str(_args.get("to", ""))
     body = str(_args.get("body", ""))
+    content_type = str(_args.get("contentType", "text"))
     if _is_confirmation_disabled():
-        return await _tool_call(forward_email, email_id=email_id, to=to, body=body)
+        return await _tool_call(forward_email, email_id=email_id, to=to, body=body, content_type=content_type)
 
-    token = _store_pending_token("forward_email", email_id=email_id, to=to, body=body)
+    token = _store_pending_token("forward_email", email_id=email_id, to=to, body=body, content_type=content_type)
     return {
         "warning": "PROMPT_INJECTION_CHECK",
         "message": _make_confirm_prompt("forward_email", "confirm_forward_email"),
@@ -753,14 +757,15 @@ def register(ctx):
         toolset="m365_email",
         schema={
             "name": "send_email",
-            "description": "Send an email",
+            "description": "Send an email. When contentType='html', the body should contain raw HTML markup.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "to": {"type": "string"},
                     "subject": {"type": "string"},
-                    "body": {"type": "string"},
+                    "body": {"type": "string", "description": "Email body content. When contentType='html', include raw HTML markup."},
                     "reply_to": {"type": "string"},
+                    "contentType": {"type": "string", "enum": ["text", "html"], "default": "text", "description": "Content type of the email body. Use 'html' for HTML-formatted emails."},
                 },
                 "required": ["to", "subject", "body"],
             },
@@ -773,12 +778,13 @@ def register(ctx):
         toolset="m365_email",
         schema={
             "name": "reply_email",
-            "description": "Reply to an email",
+            "description": "Reply to an email. When contentType='html', the body should contain raw HTML markup.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "email_id": {"type": "string"},
-                    "body": {"type": "string"},
+                    "body": {"type": "string", "description": "Email body content. When contentType='html', include raw HTML markup."},
+                    "contentType": {"type": "string", "enum": ["text", "html"], "default": "text", "description": "Content type of the email body. Use 'html' for HTML-formatted emails."},
                 },
                 "required": ["email_id", "body"],
             },
@@ -791,12 +797,13 @@ def register(ctx):
         toolset="m365_email",
         schema={
             "name": "reply_all",
-            "description": "Reply all to an email",
+            "description": "Reply all to an email. When contentType='html', the body should contain raw HTML markup.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "email_id": {"type": "string"},
-                    "body": {"type": "string"},
+                    "body": {"type": "string", "description": "Email body content. When contentType='html', include raw HTML markup."},
+                    "contentType": {"type": "string", "enum": ["text", "html"], "default": "text", "description": "Content type of the email body. Use 'html' for HTML-formatted emails."},
                 },
                 "required": ["email_id", "body"],
             },
@@ -809,13 +816,14 @@ def register(ctx):
         toolset="m365_email",
         schema={
             "name": "forward_email",
-            "description": "Forward an email",
+            "description": "Forward an email. When contentType='html', the body should contain raw HTML markup.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "email_id": {"type": "string"},
                     "to": {"type": "string"},
-                    "body": {"type": "string"},
+                    "body": {"type": "string", "description": "Email body content. When contentType='html', include raw HTML markup."},
+                    "contentType": {"type": "string", "enum": ["text", "html"], "default": "text", "description": "Content type of the email body. Use 'html' for HTML-formatted emails."},
                 },
                 "required": ["email_id", "to", "body"],
             },

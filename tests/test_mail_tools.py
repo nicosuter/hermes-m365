@@ -423,11 +423,57 @@ async def test_send_email_posts_text_message_and_optional_reply_to(config: MailC
     assert result == {"success": True, "statusCode": 202}
     payload = send_route.calls.last.request.read().decode()
     assert payload == (
-        '{"message":{"subject":"Hello","body":{"contentType":"Text","content":"Plain text body"},'
+        '{"message":{"subject":"Hello","body":{"contentType":"text","content":"Plain text body"},'
         '"toRecipients":[{"emailAddress":{"address":"person@example.com"}},'
         '{"emailAddress":{"address":"Other <other@example.com>"}}],"replyTo":[{"emailAddress":{"address":"reply@example.com"}}]},'
         '"saveToSentItems":true}'
     )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_send_email_posts_html_message_when_content_type_html(config: MailConfig):
+    mock_token()
+    send_route = respx.post(f"{GRAPH_BASE_URL}/users/user%40example.org/sendMail").mock(
+        return_value=httpx.Response(202, json={})
+    )
+
+    async with GraphClient(config) as client:
+        result = await send_email(
+            config=config,
+            client=client,
+            to="person@example.com",
+            subject="HTML Email",
+            body="<h1>Hello</h1><p>This is HTML</p>",
+            content_type="html",
+        )
+
+    assert result == {"success": True, "statusCode": 202}
+    payload = send_route.calls.last.request.read().decode()
+    assert '"contentType":"html"' in payload
+    assert '"content":"<h1>Hello</h1><p>This is HTML</p>"' in payload
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_send_email_defaults_to_text_content_type(config: MailConfig):
+    mock_token()
+    send_route = respx.post(f"{GRAPH_BASE_URL}/users/user%40example.org/sendMail").mock(
+        return_value=httpx.Response(202, json={})
+    )
+
+    async with GraphClient(config) as client:
+        result = await send_email(
+            config=config,
+            client=client,
+            to="person@example.com",
+            subject="Default CT",
+            body="Plain text",
+        )
+
+    assert result == {"success": True, "statusCode": 202}
+    payload = send_route.calls.last.request.read().decode()
+    assert '"contentType":"text"' in payload
 
 
 @pytest.mark.asyncio
@@ -484,7 +530,29 @@ async def test_reply_email_posts_to_reply_endpoint(config: MailConfig):
     assert result == {"success": True, "statusCode": 200}
     assert reply_route.called
     payload = reply_route.calls.last.request.read().decode()
-    assert payload == '{"message":{"body":{"contentType":"Text","content":"Replied!"}}}'
+    assert payload == '{"message":{"body":{"contentType":"text","content":"Replied!"}}}'
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_reply_email_posts_html_when_content_type_html(config: MailConfig):
+    from mail_tools import reply_email
+
+    mock_token()
+    reply_route = respx.post(f"{GRAPH_BASE_URL}/users/user%40example.org/messages/message-1/reply").mock(
+        return_value=httpx.Response(200, json={})
+    )
+
+    async with GraphClient(config) as client:
+        result = await reply_email(
+            config=config, client=client, email_id="message-1", body="<h1>HTML Reply</h1>", content_type="html"
+        )
+
+    assert result == {"success": True, "statusCode": 200}
+    assert reply_route.called
+    payload = reply_route.calls.last.request.read().decode()
+    assert '"contentType":"html"' in payload
+    assert '"content":"<h1>HTML Reply</h1>"' in payload
 
 
 @pytest.mark.asyncio
@@ -503,7 +571,29 @@ async def test_reply_all_posts_to_replyAll_endpoint(config: MailConfig):
     assert result == {"success": True, "statusCode": 200}
     assert reply_route.called
     payload = reply_route.calls.last.request.read().decode()
-    assert payload == '{"message":{"body":{"contentType":"Text","content":"Replied to all!"}}}'
+    assert payload == '{"message":{"body":{"contentType":"text","content":"Replied to all!"}}}'
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_reply_all_posts_html_when_content_type_html(config: MailConfig):
+    from mail_tools import reply_all
+
+    mock_token()
+    reply_route = respx.post(f"{GRAPH_BASE_URL}/users/user%40example.org/messages/message-1/replyAll").mock(
+        return_value=httpx.Response(200, json={})
+    )
+
+    async with GraphClient(config) as client:
+        result = await reply_all(
+            config=config, client=client, email_id="message-1", body="<p>HTML reply all</p>", content_type="html"
+        )
+
+    assert result == {"success": True, "statusCode": 200}
+    assert reply_route.called
+    payload = reply_route.calls.last.request.read().decode()
+    assert '"contentType":"html"' in payload
+    assert '"content":"<p>HTML reply all</p>"' in payload
 
 
 @pytest.mark.asyncio
@@ -524,7 +614,29 @@ async def test_forward_email_posts_to_forward_endpoint_with_recipients(config: M
     assert result == {"success": True, "statusCode": 200}
     assert forward_route.called
     payload = forward_route.calls.last.request.read().decode()
-    assert payload == '{"message":{"body":{"contentType":"Text","content":"FW: forwarded"},"toRecipients":[{"emailAddress":{"address":"new@example.com"}}]}}'
+    assert payload == '{"message":{"body":{"contentType":"text","content":"FW: forwarded"},"toRecipients":[{"emailAddress":{"address":"new@example.com"}}]}}'
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_forward_email_posts_html_when_content_type_html(config: MailConfig):
+    from mail_tools import forward_email
+
+    mock_token()
+    forward_route = respx.post(f"{GRAPH_BASE_URL}/users/user%40example.org/messages/message-1/forward").mock(
+        return_value=httpx.Response(200, json={})
+    )
+
+    async with GraphClient(config) as client:
+        result = await forward_email(
+            config=config, client=client, email_id="message-1", to="new@example.com", body="<p>HTML forward</p>", content_type="html"
+        )
+
+    assert result == {"success": True, "statusCode": 200}
+    assert forward_route.called
+    payload = forward_route.calls.last.request.read().decode()
+    assert '"contentType":"html"' in payload
+    assert '"content":"<p>HTML forward</p>"' in payload
 
 
 @pytest.mark.asyncio

@@ -157,17 +157,20 @@ async def send_email(
     subject: str,
     body: str,
     reply_to: str | None = None,
+    content_type: str = "text",
 ) -> dict[str, object]:
-    """Send a plain text email via Graph sendMail.
+    """Send an email via Graph sendMail.
 
     Args:
         reply_to: Optional Reply-To email address header.
+        content_type: "text" or "html". Defaults to "text".
     """
     _ = config
     recipients = [to] if isinstance(to, str) else to
+    graph_content_type = "html" if content_type.lower() == "html" else "text"
     message: dict[str, object] = {
         "subject": subject,
-        "body": {"contentType": "Text", "content": body},
+        "body": {"contentType": graph_content_type, "content": body},
         "toRecipients": [{"emailAddress": {"address": recipient}} for recipient in recipients],
     }
     if reply_to:
@@ -186,12 +189,13 @@ async def reply_email(
     client: GraphClient,
     email_id: str,
     body: str,
+    content_type: str = "text",
 ) -> dict[str, object]:
-    """Reply to the sender of an email via Graph /messages/{id}/reply."""
     _ = config
+    graph_content_type = "html" if content_type.lower() == "html" else "text"
     response = await client.post(
         client.mail_url(f"messages/{_path_component(email_id)}/reply"),
-        json={"message": {"body": {"contentType": "Text", "content": body}}},
+        json={"message": {"body": {"contentType": graph_content_type, "content": body}}},
     )
     return {"success": 200 <= response.status_code < 300, "statusCode": response.status_code}
 
@@ -202,12 +206,18 @@ async def reply_all(
     client: GraphClient,
     email_id: str,
     body: str,
+    content_type: str = "text",
 ) -> dict[str, object]:
-    """Reply to all recipients of an email via Graph /messages/{id}/replyAll."""
+    """Reply to all recipients of an email via Graph /messages/{id}/replyAll.
+
+    Args:
+        content_type: "text" or "html". Defaults to "text".
+    """
     _ = config
+    graph_content_type = "html" if content_type.lower() == "html" else "text"
     response = await client.post(
         client.mail_url(f"messages/{_path_component(email_id)}/replyAll"),
-        json={"message": {"body": {"contentType": "Text", "content": body}}},
+        json={"message": {"body": {"contentType": graph_content_type, "content": body}}},
     )
     return {"success": 200 <= response.status_code < 300, "statusCode": response.status_code}
 
@@ -219,15 +229,21 @@ async def forward_email(
     email_id: str,
     to: str | list[str],
     body: str,
+    content_type: str = "text",
 ) -> dict[str, object]:
-    """Forward an email to new recipients via Graph /messages/{id}/forward."""
+    """Forward an email to new recipients via Graph /messages/{id}/forward.
+
+    Args:
+        content_type: "text" or "html". Defaults to "text".
+    """
     _ = config
     recipients = [to] if isinstance(to, str) else to
+    graph_content_type = "html" if content_type.lower() == "html" else "text"
     response = await client.post(
         client.mail_url(f"messages/{_path_component(email_id)}/forward"),
         json={
             "message": {
-                "body": {"contentType": "Text", "content": body},
+                "body": {"contentType": graph_content_type, "content": body},
                 "toRecipients": [{"emailAddress": {"address": r}} for r in recipients],
             }
         },
