@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportMissingParameterType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownVariableType=false, reportUnusedCallResult=false
+# pyright: reportMissingImports=false, reportMissingParameterType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownVariableType=false, reportUnusedCallResult=false, reportArgumentType=false, reportIndexIssue=false
 
 import base64
 import importlib
@@ -11,7 +11,7 @@ import respx
 
 from config import MailConfig
 from graph import GRAPH_BASE_URL, GraphClient
-from mail_tools import get_attachment, get_email, list_mail, send_email
+from mail_tools import _build_odata_filter, _get_message_metadata, _trusted_sender_address, get_attachment, get_email, get_summary, list_mail, normalize_summary_response, send_email
 
 
 @pytest.fixture
@@ -34,6 +34,10 @@ def mock_token() -> None:
 
 def message_url(message_id: str) -> str:
     return f"{GRAPH_BASE_URL}/users/user%40example.org/messages/{message_id}"
+
+
+def metadata_url(message_id: str) -> str:
+    return f"{GRAPH_BASE_URL}/users/user%40example.org/messages/{message_id}?$select=id,subject,from,sender,receivedDateTime,hasAttachments"
 
 
 class _MailToolsModule(Protocol):
@@ -71,6 +75,53 @@ def test_wrap_untrusted_body_prepends_warning_and_strips_tags():
     assert "<b>" not in result
 
 
+def test_build_odata_filter_no_params_returns_none():
+    assert _build_odata_filter() is None
+
+
+def test_build_odata_filter_unread_only():
+    assert _build_odata_filter(unreadOnly=True) == "isRead eq false"
+
+
+def test_build_odata_filter_from_address():
+    assert _build_odata_filter(from_address="user@domain.com") == "from/emailAddress/address eq 'user@domain.com'"
+
+
+def test_build_odata_filter_from_address_escapes_quotes():
+    assert _build_odata_filter(from_address="user'o@domain.com") == "from/emailAddress/address eq 'user''o@domain.com'"
+
+
+def test_build_odata_filter_subject_contains():
+    assert _build_odata_filter(subject_contains="invoice") == "contains(subject, 'invoice')"
+
+
+def test_build_odata_filter_date_range():
+    result = _build_odata_filter(date_after="2024-01-01T00:00:00Z", date_before="2024-12-31T23:59:59Z")
+    assert result is not None
+    assert "receivedDateTime gt '2024-01-01T00:00:00Z'" in result
+    assert "receivedDateTime lt '2024-12-31T23:59:59Z'" in result
+
+
+def test_build_odata_filter_has_attachments():
+    assert _build_odata_filter(has_attachments=True) == "hasAttachments eq true"
+    assert _build_odata_filter(has_attachments=False) == "hasAttachments eq false"
+
+
+def test_build_odata_filter_combined():
+    result = _build_odata_filter(
+        unreadOnly=True,
+        from_address="boss@co.com",
+        subject_contains="urgent",
+        has_attachments=True,
+    )
+    assert result is not None
+    assert "isRead eq false" in result
+    assert "from/emailAddress/address eq 'boss@co.com'" in result
+    assert "contains(subject, 'urgent')" in result
+    assert "hasAttachments eq true" in result
+    assert result.count(" and ") == 3
+
+
 @pytest.mark.asyncio
 @respx.mock
 async def test_list_mail_orders_filters_and_respects_top(config: MailConfig):
@@ -99,7 +150,7 @@ async def test_list_mail_orders_filters_and_respects_top(config: MailConfig):
 
     async with GraphClient(config) as client:
         result = await list_mail(
-            config=config, client=client, unreadOnly=False, filter="from/emailAddress/address eq 'stranger@example.com'", top=2
+            config=config, client=client, unreadOnly=False, from_address="stranger@example.com", top=2
         )
 
     assert first_route.called
@@ -161,7 +212,7 @@ async def test_list_mail_unread_only_adds_isRead_filter(config: MailConfig):
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_list_mail_unread_only_combines_with_custom_filter(config: MailConfig):
+async def test_list_mail_unread_only_combines_with_from_filter(config: MailConfig):
     mock_token()
     first_url = (
         f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages"
@@ -176,7 +227,7 @@ async def test_list_mail_unread_only_combines_with_custom_filter(config: MailCon
 
     async with GraphClient(config) as client:
         result = await list_mail(
-            config=config, client=client, unreadOnly=True, top=5, filter="from/emailAddress/address eq 'boss@example.com'"
+            config=config, client=client, unreadOnly=True, top=5, from_address="boss@example.com"
         )
 
     assert first_route.called
@@ -185,95 +236,172 @@ async def test_list_mail_unread_only_combines_with_custom_filter(config: MailCon
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_get_email_sanitizes_body_marks_inline_attachments_and_warns_untrusted_sender(config: MailConfig):
+async def test_list_mail_multiple_structured_filters(config: MailConfig):
+    """Structured filters combine correctly: unreadOnly + from + subjectContains + dateAfter + hasAttachments."""
     mock_token()
-    respx.get(message_url("message-1")).mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "id": "message-1",
-                "subject": "Review",
-                "from": {"emailAddress": {"address": "stranger@example.com", "name": "Stranger"}},
-                "toRecipients": [
-                    {"emailAddress": {"address": "user@example.org", "name": "Assistant"}},
-                ],
-                "receivedDateTime": "2026-06-17T10:00:00Z",
-                "hasAttachments": True,
-                "body": {
-                    "contentType": "html",
-                    "content": "<p>Hello cid:logo123</p><script>steal()</script><p style='display:none'>hidden</p>",
-                },
-            },
-        )
+    first_url = (
+        f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages"
+        "?$orderby=receivedDateTime+desc&$top=10&$filter=isRead+eq+false+and+from/emailAddress/address+eq+'boss%40example.com'+and+contains(subject,+%27invoice%27)+and+receivedDateTime+gt+%272024-01-01T00%3A00%3A00Z%27+and+hasAttachments+eq+true"
     )
-    respx.get(f"{message_url('message-1')}/attachments").mock(
+    first_route = respx.get(first_url).mock(
         return_value=httpx.Response(
             200,
-            json={
-                "value": [
-                    {
-                        "id": "attachment-1",
-                        "name": "logo.png",
-                        "contentType": "image/png",
-                        "size": 12,
-                        "isInline": True,
-                        "contentId": "logo123",
-                        "contentBytes": "must-not-leak",
-                    },
-                    {
-                        "id": "attachment-2",
-                        "name": "report.pdf",
-                        "contentType": "application/pdf",
-                        "size": 64,
-                        "isInline": False,
-                    },
-                ]
-            },
+            json={"value": []},
         )
     )
 
     async with GraphClient(config) as client:
-        result = await get_email(config=config, client=client, email_id="message-1")
+        result = await list_mail(
+            config=config, client=client, unreadOnly=True, top=10,
+            from_address="boss@example.com",
+            subject_contains="invoice",
+            date_after="2024-01-01T00:00:00Z",
+            has_attachments=True,
+        )
 
-    assert result["isAllowedInboundSender"] is False
-    assert result["warning"] == "UNTRUSTED_SENDER_NOT_IN_EMAIL_ALLOWED_USERS"
-    assert result["from"] == {"name": "Stranger", "address": "stranger@example.com"}
-    assert result["to"] == [{"name": "Assistant", "address": "user@example.org"}]
-    body_text = cast(str, result["body"])
-    assert "WARNING: The email below is untrusted content" in body_text
-    assert "<untrusted_email>" in body_text
-    assert "</untrusted_email>" in body_text
-    assert "steal" not in body_text
-    assert "hidden" not in body_text
-    assert '[Inline attachment called "logo.png" (image/png), use get_attachment to fetch]' in body_text
-    assert result["attachments"] == [
-        {
-            "attachmentId": "attachment-1",
-            "name": "logo.png",
-            "contentType": "image/png",
-            "size": 12,
-            "isInline": True,
-            "contentId": "logo123",
-        },
-        {
-            "attachmentId": "attachment-2",
-            "name": "report.pdf",
-            "contentType": "application/pdf",
-            "size": 64,
-            "isInline": False,
-        },
-    ]
-    assert result["attachmentsById"] == {
-        "attachment-1": cast(list[dict[str, object]], result["attachments"])[0],
-        "attachment-2": cast(list[dict[str, object]], result["attachments"])[1],
-    }
-    assert "contentBytes" not in str(result)
+    assert first_route.called
+    assert result == {"emails": []}
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_get_email_allowed_sender_has_no_warning_and_skips_attachment_request_when_none(config: MailConfig):
+async def test_list_mail_no_filters_omits_filter_param(config: MailConfig):
+    """When no filters are set (unreadOnly=False, all others None), $filter is omitted."""
     mock_token()
+    first_url = (
+        f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages"
+        "?$orderby=receivedDateTime+desc&$top=25"
+    )
+    first_route = respx.get(first_url).mock(
+        return_value=httpx.Response(
+            200,
+            json={"value": []},
+        )
+    )
+
+    async with GraphClient(config) as client:
+        result = await list_mail(
+            config=config, client=client, unreadOnly=False
+        )
+
+    assert first_route.called
+    assert result == {"emails": []}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_email_blocks_untrusted_sender_with_metadata_only(config: MailConfig):
+    """Untrusted sender gets hard-block envelope with NO body/attachments fetched."""
+    mock_token()
+    metadata_route = respx.get(metadata_url("message-untrusted")).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "message-untrusted",
+                "subject": "Phishing Attempt",
+                "from": {"emailAddress": {"address": "stranger@example.com", "name": "Stranger"}},
+                "receivedDateTime": "2026-06-17T10:00:00Z",
+                "hasAttachments": True,
+            },
+        )
+    )
+    # Full message endpoint must NOT be called
+    full_message_route = respx.get(message_url("message-untrusted")).mock(
+        return_value=httpx.Response(200, json={"body": {"content": "secret"}})
+    )
+    # Attachment endpoint must NOT be called
+    attachment_route = respx.get(f"{message_url('message-untrusted')}/attachments").mock(
+        return_value=httpx.Response(200, json={"value": []})
+    )
+
+    async with GraphClient(config) as client:
+        result = await get_email(config=config, client=client, email_id="message-untrusted")
+
+    assert metadata_route.called
+    assert not full_message_route.called
+    assert not attachment_route.called
+    assert result == {
+        "error": "EMAIL_BODY_BLOCKED_UNTRUSTED_SENDER",
+        "message": 'Email body blocked: sender is not in EMAIL_ALLOWED_USERS. Use get_summary(email_id, schema_name="general") for a schema-constrained summary.',
+        "emailId": "message-untrusted",
+        "sender": "stranger@example.com",
+        "isAllowedInboundSender": False,
+    }
+    # Must NOT contain body, attachments, or attachmentsById
+    assert "body" not in result
+    assert "attachments" not in result
+    assert "attachmentsById" not in result
+    assert "warning" not in result
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_email_trusted_sender_gets_full_body_and_attachments(config: MailConfig):
+    """Trusted sender gets full response: body, attachments, attachmentsById, isAllowedInboundSender=True."""
+    mock_token()
+    respx.get(metadata_url("message-trusted")).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "message-trusted",
+                "subject": "Quarterly Report",
+                "from": {"emailAddress": {"address": "trusted@example.com", "name": "Trusted"}},
+                "receivedDateTime": "2026-06-17T10:00:00Z",
+                "hasAttachments": True,
+            },
+        )
+    )
+    respx.get(message_url("message-trusted")).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "message-trusted",
+                "subject": "Quarterly Report",
+                "from": {"emailAddress": {"address": "trusted@example.com", "name": "Trusted"}},
+                "toRecipients": [{"emailAddress": {"address": "user@example.org", "name": "Me"}}],
+                "receivedDateTime": "2026-06-17T10:00:00Z",
+                "hasAttachments": True,
+                "body": {"contentType": "text", "content": "Here is the report."},
+            },
+        )
+    )
+    respx.get(f"{message_url('message-trusted')}/attachments").mock(
+        return_value=httpx.Response(
+            200,
+            json={"value": [{"id": "att-1", "name": "report.pdf", "contentType": "application/pdf", "size": 100, "isInline": False}]},
+        )
+    )
+
+    async with GraphClient(config) as client:
+        result = await get_email(config=config, client=client, email_id="message-trusted")
+
+    assert result["isAllowedInboundSender"] is True
+    assert "warning" not in result
+    assert "error" not in result
+    assert result["body"] == "Here is the report."
+    assert result["subject"] == "Quarterly Report"
+    assert result["from"] == {"name": "Trusted", "address": "trusted@example.com"}
+    assert result["attachments"] == [{"attachmentId": "att-1", "name": "report.pdf", "contentType": "application/pdf", "size": 100, "isInline": False}]
+    assert result["attachmentsById"] == {"att-1": cast(dict[str, object], result["attachments"][0])}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_email_trusted_sender_no_attachments(config: MailConfig):
+    """Trusted sender with no attachments skips attachment request entirely."""
+    mock_token()
+    respx.get(metadata_url("message-2")).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "message-2",
+                "subject": "No attachments",
+                "from": {"emailAddress": {"address": "TRUSTED@example.com", "name": "Trusted"}},
+                "receivedDateTime": "2026-06-17T10:00:00Z",
+                "hasAttachments": False,
+            },
+        )
+    )
     respx.get(message_url("message-2")).mock(
         return_value=httpx.Response(
             200,
@@ -287,6 +415,10 @@ async def test_get_email_allowed_sender_has_no_warning_and_skips_attachment_requ
             },
         )
     )
+    # Attachment endpoint must NOT be called when hasAttachments=False
+    attachment_route = respx.get(f"{message_url('message-2')}/attachments").mock(
+        return_value=httpx.Response(200, json={"value": []})
+    )
 
     async with GraphClient(config) as client:
         result = await get_email(config=config, client=client, email_id="message-2")
@@ -295,6 +427,7 @@ async def test_get_email_allowed_sender_has_no_warning_and_skips_attachment_requ
     assert "warning" not in result
     assert result["attachments"] == []
     assert result["attachmentsById"] == {}
+    assert not attachment_route.called
 
 
 @pytest.mark.asyncio
@@ -669,3 +802,522 @@ async def test_list_mail_truncates_client_side_when_api_returns_more(config: Mai
     assert len(emails) == 2
     assert emails[0]["subject"] == "Email 1"
     assert emails[1]["subject"] == "Email 2"
+
+
+def test_trusted_sender_address_precedence_from_over_sender():
+    """Sender precedence: from.emailAddress.address takes priority over sender.emailAddress.address."""
+    msg_both = {
+        "from": {"emailAddress": {"address": "From@Example.com", "name": "From User"}},
+        "sender": {"emailAddress": {"address": "Sender@Example.com", "name": "Sender User"}},
+    }
+    assert _trusted_sender_address(msg_both) == "from@example.com"
+
+    msg_only_sender = {
+        "from": {"emailAddress": {"name": "No address field"}},
+        "sender": {"emailAddress": {"address": "SenderOnly@Example.com"}},
+    }
+    assert _trusted_sender_address(msg_only_sender) == "senderonly@example.com"
+
+    msg_only_from = {
+        "from": {"emailAddress": {"address": " FromOnly@Example.com "}},
+        "sender": None,
+    }
+    assert _trusted_sender_address(msg_only_from) == "fromonly@example.com"
+
+
+def test_trusted_sender_address_missing_or_malformed_returns_none():
+    """Missing or malformed from + sender returns None → denies access."""
+    assert _trusted_sender_address({}) is None
+    assert _trusted_sender_address({"from": None}) is None
+    assert _trusted_sender_address({"from": {"emailAddress": None}}) is None
+    assert _trusted_sender_address({"from": {"emailAddress": {"address": ""}}}) is None
+    assert _trusted_sender_address({"from": {"emailAddress": {"address": "   "}}}) is None
+    assert _trusted_sender_address({"replyTo": {"emailAddress": {"address": "hacker@example.com"}}}) is None
+    assert _trusted_sender_address({"from": "not a dict"}) is None
+
+
+def test_trusted_sender_address_ignores_reply_to():
+    """replyTo must never be used for trust determination."""
+    msg = {
+        "replyTo": [{"emailAddress": {"address": "admin@example.com"}}],
+        "from": {"emailAddress": {"name": "No address"}},
+    }
+    assert _trusted_sender_address(msg) is None
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_summary_returns_llm_error_when_ctx_is_none(config: MailConfig):
+    """get_summary returns SUMMARY_LLM_ERROR when ctx is None."""
+    from mail_tools import get_summary
+
+    mock_token()
+    respx.get(message_url("msg-1")).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "msg-1",
+                "subject": "Test",
+                "from": {"emailAddress": {"address": "trusted@example.com", "name": "Trusted"}},
+                "receivedDateTime": "2026-06-18T10:00:00Z",
+                "hasAttachments": False,
+                "body": {"content": "Hello"},
+            },
+        )
+    )
+
+    async with GraphClient(config) as client:
+        result = await get_summary(config=config, client=client, ctx=None, email_id="msg-1")
+
+    assert result.get("error") == "SUMMARY_LLM_ERROR"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_summary_returns_schema_error_for_unknown_schema_name(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """get_summary returns SUMMARY_SCHEMA_ERROR for an unknown schema name."""
+    import mail_tools as mt_mod
+    import summary_schema as ss_mod
+
+    good_cfg = MailConfig(
+        client_id="client-id",
+        client_secret="client-secret",
+        tenant_id="tenant-id",
+        mailbox_user="user@example.org",
+        allowed_users={"anyone@example.com"},
+    )
+
+    mock_token()
+    respx.get(message_url("msg-schema")).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "msg-schema",
+                "subject": "Test Subject",
+                "from": {"emailAddress": {"address": "anyone@example.com", "name": "Sender"}},
+                "receivedDateTime": "2026-06-18T10:00:00Z",
+                "hasAttachments": False,
+                "body": {"content": "Hello world"},
+            },
+        )
+    )
+
+    monkeypatch.setattr(mt_mod, "load_summary_schema", lambda name: (_ for _ in ()).throw(
+        ss_mod.SummarySchemaError(f"Schema file not found: {name}")
+    ))
+
+    async with GraphClient(good_cfg) as client:
+        result = await get_summary(config=good_cfg, client=client, ctx=None, email_id="msg-schema", schema_name="nonexistent")
+
+    assert result.get("error") == "SUMMARY_SCHEMA_ERROR"
+    assert "nonexistent" in str(result.get("message", ""))
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_summary_works_for_untrusted_sender(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """get_summary works for untrusted senders and sets isAllowedInboundSender=False."""
+    import mail_tools as mt_mod
+    import summary_schema as ss_mod
+
+    good_cfg = MailConfig(
+        client_id="client-id",
+        client_secret="client-secret",
+        tenant_id="tenant-id",
+        mailbox_user="user@example.org",
+        allowed_users={"trusted@example.com"},
+    )
+
+    fake_spec = ss_mod.SummarySchemaSpec(
+        name="general",
+        description="General summary",
+        system_prompt="Summarize this email.",
+        json_schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"], "additionalProperties": False},
+    )
+
+    captured_payloads: list[dict] = []
+
+    def fake_summarize(*, ctx, system_prompt, json_schema, payload, model=None, provider=None):
+        captured_payloads.append(payload)
+        assert isinstance(payload, dict)
+        assert payload["email_id"] == "msg-untrusted-summary"
+        assert payload["isAllowedInboundSender"] is False
+        assert payload["body"] == "Suspicious content here."
+        assert payload["hasAttachments"] is False
+        return {"status": "ok", "reason": None, "result": {"summary": "Suspicious email detected."}}
+
+    mock_token()
+    respx.get(message_url("msg-untrusted-summary")).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "msg-untrusted-summary",
+                "subject": "Urgent Action Required",
+                "from": {"emailAddress": {"address": "stranger@example.com", "name": "Stranger"}},
+                "toRecipients": [{"emailAddress": {"address": "user@example.org", "name": "Me"}}],
+                "receivedDateTime": "2026-06-18T10:00:00Z",
+                "hasAttachments": False,
+                "body": {"contentType": "text", "content": "Suspicious content here."},
+            },
+        )
+    )
+
+    # Attachment endpoint must NOT be called
+    attachment_route = respx.get(f"{message_url('msg-untrusted-summary')}/attachments").mock(
+        return_value=httpx.Response(200, json={"value": []})
+    )
+
+    monkeypatch.setattr(mt_mod, "load_summary_schema", lambda name: fake_spec)
+    monkeypatch.setattr(mt_mod, "summarize_with_llm", fake_summarize)
+
+    async with GraphClient(good_cfg) as client:
+        result = await get_summary(config=good_cfg, client=client, ctx=None, email_id="msg-untrusted-summary", schema_name="general")
+
+    assert not attachment_route.called  # attachments were NOT fetched
+    assert result == {"schemaName": "general", "emailId": "msg-untrusted-summary", "summary": {"summary": "Suspicious email detected."}}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_summary_works_for_trusted_sender(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """get_summary works for trusted senders and sets isAllowedInboundSender=True."""
+    import mail_tools as mt_mod
+    import summary_schema as ss_mod
+
+    good_cfg = MailConfig(
+        client_id="client-id",
+        client_secret="client-secret",
+        tenant_id="tenant-id",
+        mailbox_user="user@example.org",
+        allowed_users={"boss@example.com"},
+    )
+
+    fake_spec = ss_mod.SummarySchemaSpec(
+        name="general",
+        description="General summary",
+        system_prompt="Summarize this email.",
+        json_schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"], "additionalProperties": False},
+    )
+
+    captured_payloads: list[dict] = []
+
+    def fake_summarize(*, ctx, system_prompt, json_schema, payload, model=None, provider=None):
+        captured_payloads.append(payload)
+        return {"status": "ok", "reason": None, "result": {"summary": "Quarterly results are positive."}}
+
+    mock_token()
+    respx.get(message_url("msg-trusted-summary")).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "msg-trusted-summary",
+                "subject": "Q2 Results",
+                "from": {"emailAddress": {"address": "boss@example.com", "name": "Boss"}},
+                "sender": {"emailAddress": {"address": "boss@example.com", "name": "Boss"}},
+                "toRecipients": [{"emailAddress": {"address": "user@example.org", "name": "Me"}}],
+                "receivedDateTime": "2026-06-18T12:00:00Z",
+                "hasAttachments": True,
+                "body": {"contentType": "html", "content": "<p>Results look <b>great</b>.</p>"},
+            },
+        )
+    )
+
+    monkeypatch.setattr(mt_mod, "load_summary_schema", lambda name: fake_spec)
+    monkeypatch.setattr(mt_mod, "summarize_with_llm", fake_summarize)
+
+    async with GraphClient(good_cfg) as client:
+        result = await get_summary(config=good_cfg, client=client, ctx=None, email_id="msg-trusted-summary")
+
+    assert len(captured_payloads) == 1
+    payload = captured_payloads[0]
+    assert payload["email_id"] == "msg-trusted-summary"
+    assert payload["subject"] == "Q2 Results"
+    assert payload["from"] == {"name": "Boss", "address": "boss@example.com"}
+    assert payload["to"] == [{"name": "Me", "address": "user@example.org"}]
+    assert payload["receivedDateTime"] == "2026-06-18T12:00:00Z"
+    assert payload["isAllowedInboundSender"] is True
+    assert payload["hasAttachments"] is True
+    # Body was sanitized (HTML stripped)
+    assert "Results look" in payload["body"]
+    assert "<b>" not in payload["body"]
+
+    assert result == {"schemaName": "general", "emailId": "msg-trusted-summary", "summary": {"summary": "Quarterly results are positive."}}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_summary_propagates_llm_error_code(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """get_summary propagates SummaryLlmError code and message in error envelope."""
+    import mail_tools as mt_mod
+    import summary_llm as sl_mod
+    import summary_schema as ss_mod
+
+    good_cfg = MailConfig(
+        client_id="client-id",
+        client_secret="client-secret",
+        tenant_id="tenant-id",
+        mailbox_user="user@example.org",
+        allowed_users={},
+    )
+
+    fake_spec = ss_mod.SummarySchemaSpec(
+        name="general",
+        description="General summary",
+        system_prompt="Summarize.",
+        json_schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"], "additionalProperties": False},
+    )
+
+    def fake_refusal(*, ctx, system_prompt, json_schema, payload, model=None, provider=None):
+        raise sl_mod.SummaryLlmError("Model refused to generate summary", code="SUMMARY_REFUSED")
+
+    mock_token()
+    respx.get(message_url("msg-refused")).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "msg-refused",
+                "subject": "Refused",
+                "from": {"emailAddress": {"address": "x@example.com"}},
+                "receivedDateTime": "2026-06-18T10:00:00Z",
+                "hasAttachments": False,
+                "body": {"content": "test"},
+            },
+        )
+    )
+
+    monkeypatch.setattr(mt_mod, "load_summary_schema", lambda name: fake_spec)
+    monkeypatch.setattr(mt_mod, "summarize_with_llm", fake_refusal)
+
+    async with GraphClient(good_cfg) as client:
+        result = await get_summary(config=good_cfg, client=client, ctx=None, email_id="msg-refused")
+
+    assert result == {"error": "SUMMARY_REFUSED", "message": "Model refused to generate summary"}
+
+
+# ---------------------------------------------------------------------------
+# normalize_summary_response tests
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_summary_response_ok_returns_clean_envelope():
+    """Status ok with dict result returns clean envelope without internal keys."""
+    result = normalize_summary_response(
+        schema_name="general",
+        email_id="msg-42",
+        internal={"status": "ok", "reason": None, "result": {"summary": "Good."}},
+    )
+    assert result == {
+        "schemaName": "general",
+        "emailId": "msg-42",
+        "summary": {"summary": "Good."},
+    }
+    # Must NOT contain internal keys
+    assert "status" not in result
+    assert "reason" not in result
+
+
+def test_normalize_summary_response_ok_with_nested_result():
+    """Status ok with nested dict result passes through intact."""
+    result = normalize_summary_response(
+        schema_name="detailed",
+        email_id="msg-99",
+        internal={
+            "status": "ok",
+            "reason": None,
+            "result": {
+                "subject": "Q2 Results",
+                "sentiment": "positive",
+                "actionItems": ["Follow up on budget"],
+            },
+        },
+    )
+    assert result["schemaName"] == "detailed"
+    assert result["emailId"] == "msg-99"
+    assert result["summary"]["subject"] == "Q2 Results"
+    assert result["summary"]["actionItems"] == ["Follow up on budget"]
+
+
+def test_normalize_summary_response_wrong_type_returns_error():
+    """Status wrong_type returns WRONG_TYPE error envelope."""
+    result = normalize_summary_response(
+        schema_name="general",
+        email_id="msg-10",
+        internal={"status": "wrong_type", "reason": "Content is a calendar invite.", "result": None},
+    )
+    assert result == {
+        "error": "WRONG_TYPE",
+        "message": "Email content does not match the requested summary schema.",
+        "schemaName": "general",
+        "emailId": "msg-10",
+        "reason": "Content is a calendar invite.",
+    }
+
+
+def test_normalize_summary_response_wrong_type_missing_reason_returns_invalid():
+    """Status wrong_type with missing/null reason returns SUMMARY_INVALID_RESPONSE."""
+    result = normalize_summary_response(
+        schema_name="general",
+        email_id="msg-11",
+        internal={"status": "wrong_type", "reason": None, "result": None},
+    )
+    assert result["error"] == "SUMMARY_INVALID_RESPONSE"
+    assert "reason is missing or invalid" in str(result.get("message", ""))
+
+
+def test_normalize_summary_response_ok_null_result_falls_through():
+    """Status ok with null result falls through to SUMMARY_INVALID_RESPONSE."""
+    result = normalize_summary_response(
+        schema_name="general",
+        email_id="msg-bad",
+        internal={"status": "ok", "reason": None, "result": None},
+    )
+    assert result["error"] == "SUMMARY_INVALID_RESPONSE"
+    assert "missing or invalid" in str(result.get("message", ""))
+    assert result["schemaName"] == "general"
+    assert result["emailId"] == "msg-bad"
+
+
+def test_normalize_summary_response_ok_list_result_falls_through():
+    """Status ok with list result falls through to SUMMARY_INVALID_RESPONSE."""
+    result = normalize_summary_response(
+        schema_name="general",
+        email_id="msg-bad-2",
+        internal={"status": "ok", "reason": None, "result": [{"key": "val"}]},
+    )
+    assert result["error"] == "SUMMARY_INVALID_RESPONSE"
+    assert "missing or invalid" in str(result.get("message", ""))
+
+
+def test_normalize_summary_response_unknown_status_falls_through():
+    """Unknown status falls through to SUMMARY_INVALID_RESPONSE."""
+    result = normalize_summary_response(
+        schema_name="general",
+        email_id="msg-err",
+        internal={"status": "error", "reason": "timeout", "result": None},
+    )
+    assert result["error"] == "SUMMARY_INVALID_RESPONSE"
+    assert "status='error'" in str(result.get("message", ""))
+    assert result["schemaName"] == "general"
+    assert result["emailId"] == "msg-err"
+
+
+def test_normalize_summary_response_empty_dict_falls_through():
+    """Empty internal dict falls through to SUMMARY_INVALID_RESPONSE."""
+    result = normalize_summary_response(
+        schema_name="detailed",
+        email_id="msg-empty",
+        internal={},
+    )
+    assert result["error"] == "SUMMARY_INVALID_RESPONSE"
+    assert "status=''" in str(result.get("message", ""))
+    assert result["schemaName"] == "detailed"
+    assert result["emailId"] == "msg-empty"
+
+
+def test_normalize_summary_response_no_alternate_schemas_in_wrong_type():
+    """Wrong_type error must NOT suggest alternate schema names."""
+    result = normalize_summary_response(
+        schema_name="invoice",
+        email_id="msg-inv",
+        internal={"status": "wrong_type", "reason": "Not an invoice.", "result": None},
+    )
+    assert result["error"] == "WRONG_TYPE"
+    msg_text = str(result.get("message", ""))
+    assert "alternate" not in msg_text.lower()
+    assert "suggest" not in msg_text.lower()
+    # Only contains: error, message, schemaName, emailId, reason
+    assert set(result.keys()) == {"error", "message", "schemaName", "emailId", "reason"}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_summary_uses_normalize_summary_response(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """get_summary normalizes the internal wrapper before returning."""
+    import mail_tools as mt_mod
+    import summary_schema as ss_mod
+
+    good_cfg = MailConfig(
+        client_id="client-id",
+        client_secret="client-secret",
+        tenant_id="tenant-id",
+        mailbox_user="user@example.org",
+        allowed_users={"trusted@example.com"},
+    )
+
+    fake_spec = ss_mod.SummarySchemaSpec(
+        name="general",
+        description="General summary",
+        system_prompt="Summarize this email.",
+        json_schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"], "additionalProperties": False},
+    )
+
+    def fake_summarize(*, ctx, system_prompt, json_schema, payload, model=None, provider=None):
+        return {"status": "wrong_type", "reason": "Calendar event, not email.", "result": None}
+
+    mock_token()
+    respx.get(message_url("msg-wrong-type")).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "msg-wrong-type",
+                "subject": "Team Lunch",
+                "from": {"emailAddress": {"address": "calendar@microsoft.com"}},
+                "receivedDateTime": "2026-06-18T10:00:00Z",
+                "hasAttachments": False,
+                "body": {"content": "Meeting at noon"},
+            },
+        )
+    )
+
+    monkeypatch.setattr(mt_mod, "load_summary_schema", lambda name: fake_spec)
+    monkeypatch.setattr(mt_mod, "summarize_with_llm", fake_summarize)
+
+    async with GraphClient(good_cfg) as client:
+        result = await get_summary(config=good_cfg, client=client, ctx=None, email_id="msg-wrong-type")
+
+    assert result == {
+        "error": "WRONG_TYPE",
+        "message": "Email content does not match the requested summary schema.",
+        "schemaName": "general",
+        "emailId": "msg-wrong-type",
+        "reason": "Calendar event, not email.",
+    }
+    # Internal keys must NOT leak
+    assert "status" not in result
+    assert "result" not in result
+
+
+def test_normalize_summary_response_unwraps_llm_wrapper():
+    """normalize_summary_response unwraps summarize_with_llm wrapper."""
+    result = normalize_summary_response(
+        schema_name="general",
+        email_id="msg-42",
+        internal={"status": "success", "data": {"status": "ok", "reason": None, "result": {"summary": "Good."}}},
+    )
+    assert result == {
+        "schemaName": "general",
+        "emailId": "msg-42",
+        "summary": {"summary": "Good."},
+    }
+
+
+def test_normalize_summary_response_unwraps_llm_wrapper_wrong_type():
+    """Unwrap LLM wrapper with wrong_type status."""
+    result = normalize_summary_response(
+        schema_name="general",
+        email_id="msg-43",
+        internal={"status": "success", "data": {"status": "wrong_type", "reason": "Calendar invite.", "result": None}},
+    )
+    assert result["error"] == "WRONG_TYPE"
+    assert result["reason"] == "Calendar invite."
+
+
+def test_normalize_summary_response_non_dict_data_fails():
+    """LLM wrapper with non-dict data returns SUMMARY_INVALID_RESPONSE."""
+    result = normalize_summary_response(
+        schema_name="general",
+        email_id="msg-44",
+        internal={"status": "success", "data": "raw text response"},
+    )
+    assert result["error"] == "SUMMARY_INVALID_RESPONSE"
+    assert "non-JSON" in str(result.get("message", ""))

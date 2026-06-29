@@ -6,6 +6,7 @@ description: Microsoft 365 email platform adapter for Hermes gateway using Micro
 provides_tools:
   - list_mail
   - get_email
+  - get_summary
   - get_attachment
   - send_email
   - reply_email
@@ -28,3 +29,5 @@ optional_env:
   - M365_EMAIL_STATE_PATH
   - M365_POLL_INTERVAL_SECONDS
   - DISABLE_SEND_CONFIRM
+  - M365_SUMMARY_MODEL
+  - M365_SUMMARY_PROVIDER

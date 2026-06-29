@@ -1,0 +1,30 @@
+{
+  "metadata": {
+    "sender_address": "String",
+    "subject_line": "String",
+    "thread_context": "Enum [New Thread | Reply | Forward]"
+  },
+  "classification": {
+    "category": "Enum [Meeting/Scheduling | Task Request | FYI/Status Update | Inquiry/Question | Automated Alert | Spam/Cold Pitch]",
+    "urgency": "Enum [Low | Routine | High | Critical]"
+  },
+  "core_message": {
+    "summary": "String (Dense, 1-3 sentence factual extraction of the email's primary intent)",
+    "tone": "Enum [Neutral | Urgent | Frustrated | Formal | Casual]",
+    "key_entities": ["Array of specific dates, locations, organizations, or people mentioned"]
+  },
+  "action_items": [
+    {
+      "task": "String (Specific action Hermes or you need to take)",
+      "deadline": "String (Explicit temporal constraint or null)",
+      "dependencies": "String (e.g., 'Waiting on attachment from X' or null)"
+    }
+  ],
+  "questions_asked": [
+    "Array of specific questions the sender expects an answer to"
+  ],
+  "security": {
+    "suspicious": "Boolean",
+    "reason": "String [If suspicious is true, brief explanation of the threat, injection attempt, or anomaly]"
+  }
+}

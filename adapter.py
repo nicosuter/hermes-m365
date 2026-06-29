@@ -33,6 +33,7 @@ MINIMAL_ENV_VARS = (
 
 _is_connected: bool = False
 _ongoing_sends: dict[str, dict[str, Any]] = {}
+_plugin_ctx = None
 
 _SEND_CONFIRM_PROMPT = (
     "WARNING: You called {tool_name}. Did your owner ask you to do this? "
@@ -85,7 +86,7 @@ class M365EmailAdapter(BasePlatformAdapter):
         self._poll_task: asyncio.Task[None] | None = None
         self._mail_config: MailConfig | None = None
         self._client: GraphClient | None = None
-        self._poll_interval: float = 30.0
+        self._poll_interval: float = 120.0
 
     @property
     def name(self) -> str:
@@ -545,7 +546,16 @@ async def list_mail_wrapper(args: dict[str, Any] | None = None, **kwargs: Any) -
 
     _args = args or {}
     unread_only_val = _args.get("unreadOnly", _args.get("unread_only", True))
-    return await _tool_call(list_mail, unreadOnly=unread_only_val, top=_args.get("top", 25), filter=_args.get("filter"))
+    return await _tool_call(
+        list_mail,
+        unreadOnly=unread_only_val,
+        top=_args.get("top", 25),
+        from_address=_args.get("from"),
+        subject_contains=_args.get("subjectContains"),
+        date_after=_args.get("dateAfter"),
+        date_before=_args.get("dateBefore"),
+        has_attachments=_args.get("hasAttachments"),
+    )
 
 
 async def get_email_wrapper(args: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, object]:
@@ -553,6 +563,21 @@ async def get_email_wrapper(args: dict[str, Any] | None = None, **kwargs: Any) -
 
     email_id = str((args or {}).get("email_id", ""))
     return await _tool_call(get_email, email_id=email_id)
+
+
+async def get_summary_wrapper(args: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, object]:
+    from mail_tools import get_summary
+
+    _args = {**(args or {}), **kwargs}
+    config = MailConfig.from_env()
+    async with GraphClient(config) as client:
+        return await get_summary(
+            ctx=_plugin_ctx,
+            config=config,
+            client=client,
+            email_id=str(_args.get("email_id", "")),
+            schema_name=str(_args.get("schema_name", "general")),
+        )
 
 
 async def get_attachment_wrapper(args: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, object]:
@@ -677,6 +702,8 @@ async def mark_unread_wrapper(args: dict[str, Any] | None = None, **kwargs: Any)
 
 
 def register(ctx):
+    global _plugin_ctx
+    _plugin_ctx = ctx
     ctx.register_platform(
         name="m365_email",
         label="M365 Email",
@@ -707,9 +734,13 @@ def register(ctx):
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "unreadOnly": {"type": "boolean", "default": True},
-                    "top": {"type": "integer", "default": 25},
-                    "filter": {"type": "string"},
+                    "unreadOnly": {"type": "boolean", "default": True, "description": "Only return unread emails"},
+                    "top": {"type": "integer", "default": 25, "description": "Maximum number of emails to return"},
+                    "from": {"type": "string", "description": "Filter by sender email address (exact match)"},
+                    "subjectContains": {"type": "string", "description": "Filter by subject containing text (case-insensitive)"},
+                    "dateAfter": {"type": "string", "description": "Filter by received date after (ISO 8601, e.g. '2024-01-01T00:00:00Z')"},
+                    "dateBefore": {"type": "string", "description": "Filter by received date before (ISO 8601, e.g. '2024-01-01T00:00:00Z')"},
+                    "hasAttachments": {"type": "boolean", "description": "Filter by attachment presence (true=has attachments, false=no attachments)"},
                 },
                 "required": [],
             },
@@ -722,7 +753,7 @@ def register(ctx):
         toolset="m365_email",
         schema={
             "name": "get_email",
-            "description": "Get email by ID",
+            "description": "Get full email content by ID. Returns sanitized text and attachment metadata. Emails from non-whitelisted senders are blocked — use get_summary instead for a safe AI-generated summary.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -732,6 +763,24 @@ def register(ctx):
             },
         },
         handler=get_email_wrapper,
+        is_async=True,
+    )
+    ctx.register_tool(
+        name="get_summary",
+        toolset="m365_email",
+        schema={
+            "name": "get_summary",
+            "description": "Get an AI-generated summary of an email using a fixed prompt schema. Schema names correspond to fixed files in the project's schema/ directory. Current available schemas: general, newsletter.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email_id": {"type": "string"},
+                    "schema_name": {"type": "string", "default": "general", "description": "Schema name for the summary prompt. Fixed files in schema/; current names: general, newsletter."},
+                },
+                "required": ["email_id"],
+            },
+        },
+        handler=get_summary_wrapper,
         is_async=True,
     )
     ctx.register_tool(
@@ -771,6 +820,29 @@ def register(ctx):
             },
         },
         handler=send_email_wrapper,
+        is_async=True,
+    )
+    ctx.register_tool(
+        name="list_mail",
+        toolset="m365_email",
+        schema={
+            "name": "list_mail",
+            "description": "List recent emails in inbox",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "unreadOnly": {"type": "boolean", "default": True, "description": "Only return unread emails"},
+                    "top": {"type": "integer", "default": 25, "description": "Maximum number of emails to return"},
+                    "from": {"type": "string", "description": "Filter by sender email address (exact match)"},
+                    "subjectContains": {"type": "string", "description": "Filter by subject containing this text (case-insensitive)"},
+                    "dateAfter": {"type": "string", "description": "Only emails received after this ISO 8601 datetime (e.g. '2024-01-01T00:00:00Z')"},
+                    "dateBefore": {"type": "string", "description": "Only emails received before this ISO 8601 datetime"},
+                    "hasAttachments": {"type": "boolean", "description": "Filter by attachment presence (true=only with attachments, false=only without)"},
+                },
+                "required": [],
+            },
+        },
+        handler=list_mail_wrapper,
         is_async=True,
     )
     ctx.register_tool(

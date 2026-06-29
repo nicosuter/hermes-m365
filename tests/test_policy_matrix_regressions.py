@@ -42,6 +42,10 @@ def mail_url(path: str) -> str:
     return f"{GRAPH_BASE_URL}/users/user%40example.org/{path}"
 
 
+def metadata_url(message_id: str) -> str:
+    return f"{mail_url('messages/' + message_id)}?$select=id,subject,from,sender,receivedDateTime,hasAttachments"
+
+
 def message_payload(message_id: str, sender: str, *, has_attachments: bool = True) -> dict[str, object]:
     return {
         "id": message_id,
@@ -113,15 +117,30 @@ async def test_policy_allowed_inbound_sender_can_read_and_fetch_attachment(
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_policy_dropped_sender_manual_list_and_read_return_email_with_warning(config: MailConfig):
+async def test_policy_dropped_sender_manual_list_and_read_blocks_untrusted(config: MailConfig):
+    """Untrusted sender gets hard-block envelope; full message and attachments are NOT fetched."""
     mock_token()
     inbox_route = respx.get(
         mail_url("mailFolders/inbox/messages?$orderby=receivedDateTime+desc&$top=25")
     ).mock(return_value=httpx.Response(200, json={"value": [message_payload("dropped-message", "stranger@example.com")]}))
-    respx.get(mail_url("messages/dropped-message")).mock(
+    metadata_route = respx.get(metadata_url("dropped-message")).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "dropped-message",
+                "subject": "Policy matrix",
+                "from": {"emailAddress": {"address": "stranger@example.com", "name": "Stranger"}},
+                "hasAttachments": True,
+                "receivedDateTime": "2026-01-01T00:00:00Z",
+            },
+        )
+    )
+    # Full message endpoint must NOT be called for untrusted senders
+    full_message_route = respx.get(mail_url("messages/dropped-message")).mock(
         return_value=httpx.Response(200, json=message_payload("dropped-message", "stranger@example.com"))
     )
-    respx.get(mail_url("messages/dropped-message/attachments")).mock(
+    # Attachment endpoint must NOT be called for untrusted senders
+    attachment_route = respx.get(mail_url("messages/dropped-message/attachments")).mock(
         return_value=httpx.Response(200, json={"value": [attachment_payload("att-dropped", "secret.pdf", b"must-not-leak")]})
     )
 
@@ -130,23 +149,17 @@ async def test_policy_dropped_sender_manual_list_and_read_return_email_with_warn
         email = await get_email(config=config, client=client, email_id="dropped-message")
 
     assert inbox_route.called
+    assert metadata_route.called
+    assert not full_message_route.called
+    assert not attachment_route.called
     emails: list[dict[str, object]] = cast(list[dict[str, object]], listed["emails"])
     assert emails[0]["from"] == {"name": "Stranger", "address": "stranger@example.com"}
+    assert email["error"] == "EMAIL_BODY_BLOCKED_UNTRUSTED_SENDER"
     assert email["isAllowedInboundSender"] is False
-    assert email["warning"] == "UNTRUSTED_SENDER_NOT_IN_EMAIL_ALLOWED_USERS"
-    body_text = cast(str, email["body"])
-    assert "WARNING: The email below is untrusted content" in body_text
-    assert "<untrusted_email>" in body_text
-    assert "</untrusted_email>" in body_text
-    assert email["attachments"] == [
-        {
-            "attachmentId": "att-dropped",
-            "name": "secret.pdf",
-            "contentType": "application/octet-stream",
-            "size": len(b"must-not-leak"),
-            "isInline": False,
-        }
-    ]
+    assert "body" not in email
+    assert "attachments" not in email
+    assert "attachmentsById" not in email
+    assert "warning" not in email
     assert "contentBytes" not in str(email)
     assert "must-not-leak" not in str(email)
 

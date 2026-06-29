@@ -12,6 +12,8 @@ from pathlib import Path
 DEFAULT_ATTACHMENT_MAX_BYTES = 10_485_760
 DEFAULT_POLL_TOP = 25
 DEFAULT_EMAIL_STATE_PATH = Path(".runtime/poll-state.json")
+DEFAULT_REQUEST_TIMEOUT = 30.0
+DEFAULT_REQUEST_TIMEOUT = 30.0
 REQUIRED_ENV_VARS = (
     "M365_MAIL_CLIENT_ID",
     "M365_MAIL_CLIENT_SECRET",
@@ -23,6 +25,10 @@ REQUIRED_ENV_VARS = (
 
 class MailConfigError(RuntimeError):
     """Raised when M365 email configuration is invalid or incomplete."""
+
+
+# No SummaryOpenAIConfig needed — Hermes ctx.llm owns credentials.
+# MailConfig.summary_model is an optional override passed to ctx.llm.complete_structured().
 
 
 @dataclass(frozen=True)
@@ -37,6 +43,9 @@ class MailConfig:
     attachment_max_bytes: int = DEFAULT_ATTACHMENT_MAX_BYTES
     email_state_path: Path = DEFAULT_EMAIL_STATE_PATH
     poll_top: int = DEFAULT_POLL_TOP
+    request_timeout: float = DEFAULT_REQUEST_TIMEOUT
+    summary_model: str | None = None
+    summary_provider: str | None = None
 
     @classmethod
     def from_env(cls, *, load_dotenv: bool = True, project_root: Path | None = None) -> "MailConfig":
@@ -67,7 +76,30 @@ class MailConfig:
                 "M365_POLL_TOP",
                 DEFAULT_POLL_TOP,
             ),
+            request_timeout=parse_positive_float(
+                env,
+                "M365_REQUEST_TIMEOUT",
+                DEFAULT_REQUEST_TIMEOUT,
+            ),
+            summary_model=_env_or_none(env, "M365_SUMMARY_MODEL"),
+            summary_provider=_env_or_none(env, "M365_SUMMARY_PROVIDER"),
         )
+
+
+def get_summary_model(config: MailConfig) -> str | None:
+    """Return the configured summary model, or None if not set.
+
+    When None, Hermes ctx.llm will use its default model.
+    """
+    return config.summary_model
+
+
+def get_summary_provider(config: MailConfig) -> str | None:
+    """Return the configured summary provider, or None if not set.
+
+    When None, Hermes ctx.llm will use its default provider.
+    """
+    return config.summary_provider
 
 
 def project_root_from_module() -> Path:
@@ -96,6 +128,14 @@ def is_allowed_sender(address: str | None, allowed_users: set[str]) -> bool:
     return address.strip().lower() in allowed_users
 
 
+def _env_or_none(env: Mapping[str, str], key: str) -> str | None:
+    """Return env value stripped, or None if the key is absent/empty."""
+    raw = env.get(key)
+    if not raw:
+        return None
+    return raw.strip()
+
+
 def parse_positive_int(env: Mapping[str, str], key: str, default: int) -> int:
     """Read a positive integer env var with a clear configuration error."""
     raw_value = env.get(key)
@@ -107,4 +147,18 @@ def parse_positive_int(env: Mapping[str, str], key: str, default: int) -> int:
         raise MailConfigError(f"{key} must be a positive integer") from exc
     if value <= 0:
         raise MailConfigError(f"{key} must be a positive integer")
+    return value
+
+
+def parse_positive_float(env: Mapping[str, str], key: str, default: float) -> float:
+    """Read a positive float env var with a clear configuration error."""
+    raw_value = env.get(key)
+    if raw_value is None or raw_value == "":
+        return default
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise MailConfigError(f"{key} must be a positive number") from exc
+    if value <= 0:
+        raise MailConfigError(f"{key} must be a positive number")
     return value

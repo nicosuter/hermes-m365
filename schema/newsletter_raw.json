@@ -1,0 +1,34 @@
+{
+  "newsletter_metadata": {
+    "publisher": "String (e.g., 'Bloomberg')",
+    "edition_or_date": "String"
+  },
+  "market_data": [
+    {
+      "asset": "String (e.g., 'S&P 500 futures')",
+      "value": "String (e.g., '7,592.25')",
+      "movement": "String (e.g., '+1.3%')"
+    }
+  ],
+  "news_items": [
+    {
+      "category": "Enum [Geopolitics | Macroeconomics | Tech | Corporate | General]",
+      "headline": "String",
+      "summary": "String",
+      "key_figures": ["Array of specific numbers, dates, or names mentioned"],
+      "sources": ["Array of publication names, organizations, or journalists cited"]
+    }
+  ],
+  "opinion_and_features": [
+    {
+      "author": "String",
+      "topic": "String",
+      "core_argument": "String",
+      "sources": ["Array of publication names or references cited"]
+    }
+  ],
+  "security": {
+    "suspicious": "Boolean",
+    "reason": "String [If suspicious is true, brief explanation of the threat or anomaly]"
+  }
+}

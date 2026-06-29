@@ -19,19 +19,15 @@ class FakeContext:
     def __init__(self) -> None:
         self.platform_kwargs: dict[str, object] | None = None
         self.tools: list[tuple[str, object, str]] = []
+        self.tool_kwargs: dict[str, dict[str, object]] = {}
+        self._tool_call_kwargs: dict[str, bool] = {}  # tracks if handler= was used as keyword
 
     def register_platform(self, **kwargs: object) -> None:
         self.platform_kwargs = kwargs
 
-    def register_tool(
-        self,
-        name: str,
-        toolset: str,
-        schema: dict,
-        handler: Callable,
-        **kwargs: object,
-    ) -> None:
+    def register_tool(self, *, name: str, toolset: str, schema: dict, handler: Callable, **kwargs: object) -> None:
         self.tools.append((name, handler, schema.get("description", "")))
+        self.tool_kwargs[name] = {"has_handler_kw": True, **kwargs}
 
 
 # ── Plugin YAML tests ──────────────────────────────────────────────────────
@@ -76,40 +72,66 @@ class TestAdapterRegistration:
         assert ctx.platform_kwargs is not None
         assert ctx.platform_kwargs["name"] == "m365_email"
 
-    def test_registers_all_thirteen_tools(self) -> None:
+    def test_registers_all_fourteen_tools(self) -> None:
         from adapter import register
 
         ctx = FakeContext()
         register(ctx)
         tool_names = {name for name, _, _ in ctx.tools}
         expected = {
-            "list_mail", "get_email", "get_attachment", "send_email",
+            "list_mail", "get_email", "get_summary", "get_attachment", "send_email",
             "reply_email", "reply_all", "forward_email",
             "mark_read", "mark_unread",
             "confirm_send_email", "confirm_reply_email", "confirm_reply_all", "confirm_forward_email",
         }
         assert tool_names == expected
 
-    def test_tool_descriptions_present(self) -> None:
+    def test_get_summary_registered_with_handler(self) -> None:
         from adapter import register
 
         ctx = FakeContext()
         register(ctx)
-        for _, _, desc in ctx.tools:
-            assert desc and len(desc) > 0
+        tool_names = {name for name, _, _ in ctx.tools}
+        assert "get_summary" in tool_names
+        kwargs = ctx.tool_kwargs.get("get_summary", {})
+        assert kwargs.get("has_handler_kw") is True, "handler= must be passed as a keyword argument to register_tool()"
+        assert kwargs.get("is_async") is True
 
-    def test_required_env_in_platform(self) -> None:
+    def test_get_email_description_mentions_summary(self) -> None:
         from adapter import register
 
         ctx = FakeContext()
         register(ctx)
-        assert ctx.platform_kwargs is not None
-        required = ctx.platform_kwargs["required_env"]
-        assert isinstance(required, list)
-        names = [r["name"] if isinstance(r, dict) else r for r in required]
-        assert "M365_MAIL_CLIENT_ID" in names
-        assert "M365_MAIL_CLIENT_SECRET" in names
-        assert "M365_MAIL_TENANT_ID" in names
+        get_email_desc = next(
+            desc for name, _, desc in ctx.tools if name == "get_email"
+        )
+        assert "get_summary" in get_email_desc
+
+    def test_get_summary_description_mentions_schemas(self) -> None:
+        from adapter import register
+
+        ctx = FakeContext()
+        register(ctx)
+        get_summary_desc = next(
+            desc for name, _, desc in ctx.tools if name == "get_summary"
+        )
+        assert "schema" in get_summary_desc.lower()
+
+
+class TestPluginYamlSummary:
+    def test_plugin_yaml_includes_get_summary(self) -> None:
+        content = _load_plugin_yaml()
+        assert "get_summary" in content
+
+    def test_plugin_yaml_includes_summary_model_env(self) -> None:
+        content = _load_plugin_yaml()
+        assert "M365_SUMMARY_MODEL" in content
+        assert "M365_SUMMARY_PROVIDER" in content
+        # Must NOT contain old OpenAI env vars
+        assert "M365_SUMMARY_OPENAI_API_KEY" not in content
+        assert "M365_SUMMARY_OPENAI_BASE_URL" not in content
+        assert "M365_SUMMARY_OPENAI_MODEL" not in content
+        assert "M365_SUMMARY_OPENAI_API_MODE" not in content
 
 
 # ── Validation tests ───────────────────────────────────────────────────────

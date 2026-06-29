@@ -34,14 +34,16 @@ platforms:
 | `EMAIL_ALLOWED_USERS` | Comma-separated list of email addresses allowed to trigger inbound events. | (None) |
 | `M365_ATTACHMENT_MAX_BYTES` | Maximum size for attachment downloads in bytes. | `10485760` (10MB) |
 | `M365_EMAIL_STATE_PATH` | Path to the JSON file storing polling state (watermark/processed IDs). | `.runtime/poll-state.json` |
-| `M365_POLL_INTERVAL_SECONDS` | Frequency of inbox polling in seconds. | `30` |
+| `M365_POLL_INTERVAL_SECONDS` | Frequency of inbox polling in seconds. | `120` |
 | `DISABLE_SEND_CONFIRM` | Set to `true` to bypass send confirmation token flow. **Not recommended for production.** | (unset) |
+| `M365_SUMMARY_MODEL` | Optional model ID for `get_summary`. If unset, Hermes uses its default model. Requires `allow_model_override: true` in `config.yaml` trust gate. | (unset) |
 
 ## Tool Contracts
 
 - `list_mail(top=25, filter=None, unreadOnly=False)`: List recent emails from the inbox. Returns all senders (subject to inbound drop logic). `unreadOnly` filters to unread messages only.
 - `get_email(email_id)`: Retrieve email content. Returns sanitized text and attachment metadata.
 - `get_attachment(email_id, attachment_id)`: Download an attachment.
+- `get_summary(email_id, schema_name="general")`: AI-generated summary of an email using a fixed schema from the project `schema/` directory. Available for ALL emails, including those from non-whitelisted senders whose body access is blocked by `get_email`. Current schemas: `general`, `newsletter`.
 - `send_email(to, subject, body, reply_to=None)`: Send a plain text email. `reply_to` sets the Reply-To email address header.
 - `reply_email(email_id, body)`: Reply to a specific email.
 - `reply_all(email_id, body)`: Reply-all to a specific email.
@@ -52,7 +54,7 @@ platforms:
 ### Inbound Filtering (`EMAIL_ALLOWED_USERS`)
 The `EMAIL_ALLOWED_USERS` environment variable defines the single allowlist for inbound interaction:
 - **Inbound Drop**: Emails from senders NOT in this list are silently dropped during polling (no MessageEvent, no chat creation, no notification).
-- **`get_email`**: Will return a warning if the sender is not in the allowlist.
+- **`get_email`**: Blocks body access entirely for senders not in the allowlist, returning `EMAIL_BODY_BLOCKED_UNTRUSTED_SENDER`.
 - **`get_attachment`**: Is strictly gated; requests for attachments from unallowed senders will be rejected with error `ATTACHMENT_BLOCKED_UNTRUSTED_SENDER`.
 
 ### Outbound Send Confirmation (Prompt Injection Defense)
@@ -70,6 +72,36 @@ This prevents an LLM agent from accidentally sending emails due to prompt inject
 Tokens expire after **30 minutes**. If the token is invalid or expired, the caller must invoke the original tool again.
 
 To disable this gate (e.g., for fully automated test environments): set `DISABLE_SEND_CONFIRM=true`.
+
+## get_summary — AI-Generated Email Summaries
+
+`get_summary(email_id, schema_name="general")` returns an AI-generated summary of an email using a fixed schema file from the project `schema/` directory. This tool is available for ALL emails, including those from non-whitelisted senders whose body access is blocked by `get_email`.
+
+Current available schemas: `general`, `newsletter`. Raw reference files (`schema/general_raw.json`, `schema/newsletter_raw.json`) are also retained for context.
+
+Schemas are enforced via the API's structured output parameter — they are strict schema constraints, not system-prompt suggestions.
+
+### Error Responses
+
+| Error | Description |
+|---|---|
+| `WRONG_TYPE` | Email content does not match the requested schema. No alternate schemas are suggested. |
+| `SUMMARY_CONFIG_ERROR` | Summary model not configured (set `M365_SUMMARY_MODEL`). |
+| `SUMMARY_SCHEMA_ERROR` | Unknown or invalid schema name. |
+| `SUMMARY_API_ERROR` | API timeout, rate limit, or server error. |
+| `SUMMARY_REFUSED` | Model refused to generate a summary. |
+| `SUMMARY_INCOMPLETE` | Response was truncated (max tokens reached). |
+| `SUMMARY_INVALID_RESPONSE` | Invalid JSON or response structure. |
+
+### Successful Response
+
+```json
+{"schemaName": "general", "emailId": "AAMk...", "summary": {...}}
+```
+
+## Troubleshooting
+
+If `get_email` returns `EMAIL_BODY_BLOCKED_UNTRUSTED_SENDER`, use `get_summary(email_id, schema_name="general")` instead for a safe, schema-constrained summary.
 
 ### Attachment Safety
 - `get_email` only provides metadata (filenames, sizes) and sanitized text.

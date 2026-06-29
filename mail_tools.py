@@ -3,17 +3,55 @@
 from __future__ import annotations
 
 import base64
+import logging
 import re
 from pathlib import Path
 from typing import cast
 from urllib.parse import quote, quote_plus
 
 from attachments import build_saved_path, check_attachment_sender, enforce_attachment_size, sanitize_filename
-from config import MailConfig, is_allowed_sender
+from config import MailConfig, MailConfigError, get_summary_model, get_summary_provider, is_allowed_sender
 from graph import GraphClient
+from summary_llm import SummaryLlmError, summarize_with_llm
+from summary_schema import SummarySchemaError, build_internal_response_schema, load_summary_schema
 
+logger = logging.getLogger(__name__)
 
 UNTRUSTED_SENDER_WARNING = "UNTRUSTED_SENDER_NOT_IN_EMAIL_ALLOWED_USERS"
+
+
+def _build_odata_filter(
+    *,
+    unreadOnly: bool = False,
+    from_address: str | None = None,
+    subject_contains: str | None = None,
+    date_after: str | None = None,
+    date_before: str | None = None,
+    has_attachments: bool | None = None,
+) -> str | None:
+    """Build an OData $filter expression from structured filter parameters.
+
+    Returns None if no filters are specified, otherwise a valid OData expression.
+    """
+    parts: list[str] = []
+
+    if unreadOnly:
+        parts.append("isRead eq false")
+    if from_address:
+        # Escape single quotes in email addresses (unlikely but safe)
+        escaped = from_address.replace("'", "''")
+        parts.append(f"from/emailAddress/address eq '{escaped}'")
+    if subject_contains:
+        escaped = subject_contains.replace("'", "''")
+        parts.append(f"contains(subject, '{escaped}')")
+    if date_after:
+        parts.append(f"receivedDateTime gt '{date_after}'")
+    if date_before:
+        parts.append(f"receivedDateTime lt '{date_before}'")
+    if has_attachments is not None:
+        parts.append(f"hasAttachments eq {'true' if has_attachments else 'false'}")
+
+    return " and ".join(parts) if parts else None
 ATTACHMENT_BLOCKED_ERROR = "ATTACHMENT_BLOCKED_UNTRUSTED_SENDER"
 
 _XML_TAG_RE = re.compile(r"<[^>]+>")
@@ -42,20 +80,27 @@ async def list_mail(
     client: GraphClient,
     unreadOnly: bool = True,
     top: int = 25,
-    filter: str | None = None,
+    from_address: str | None = None,
+    subject_contains: str | None = None,
+    date_after: str | None = None,
+    date_before: str | None = None,
+    has_attachments: bool | None = None,
 ) -> dict[str, object]:
     _ = config
     query_parts = [
         f"$orderby={quote_plus('receivedDateTime desc')}",
         f"$top={int(top)}",
     ]
-    filters: list[str] = []
-    if unreadOnly:
-        filters.append("isRead eq false")
-    if filter:
-        filters.append(filter)
-    if filters:
-        query_parts.append(f"$filter={quote_plus(' and '.join(filters))}")
+    odata_filter = _build_odata_filter(
+        unreadOnly=unreadOnly,
+        from_address=from_address,
+        subject_contains=subject_contains,
+        date_after=date_after,
+        date_before=date_before,
+        has_attachments=has_attachments,
+    )
+    if odata_filter:
+        query_parts.append(f"$filter={quote_plus(odata_filter)}")
 
     url = client.mail_url(f"mailFolders/inbox/messages?{'&'.join(query_parts)}")
     response = await client.get(url)
@@ -67,10 +112,23 @@ async def list_mail(
 
 
 async def get_email(*, config: MailConfig, client: GraphClient, email_id: str) -> dict[str, object]:
+    # Step 1: Fetch metadata only — check allowlist before fetching body
+    metadata = await _get_message_metadata(client, email_id)
+    sender_address = _trusted_sender_address(metadata) or ""
+    allowed_sender = is_allowed_sender(sender_address, config.allowed_users)
+
+    if not allowed_sender:
+        return {
+            "error": "EMAIL_BODY_BLOCKED_UNTRUSTED_SENDER",
+            "message": "Email body blocked: sender is not in EMAIL_ALLOWED_USERS. Use get_summary(email_id, schema_name=\"general\") for a schema-constrained summary.",
+            "emailId": _string_value(metadata.get("id"), default=email_id),
+            "sender": sender_address,
+            "isAllowedInboundSender": False,
+        }
+
+    # Step 2: Allowed sender — fetch full message
     message = await _get_message(client, email_id)
     sender = _email_address(message.get("from"))
-    sender_address = _address_text(sender)
-    allowed_sender = is_allowed_sender(sender_address, config.allowed_users)
 
     attachments = await _get_attachment_metadata(client, email_id) if bool(message.get("hasAttachments")) else []
     inline_attachments = [attachment for attachment in attachments if bool(attachment.get("isInline"))]
@@ -99,13 +157,11 @@ async def get_email(*, config: MailConfig, client: GraphClient, email_id: str) -
         "from": sender,
         "to": _recipient_list(message.get("toRecipients")),
         "receivedDateTime": _string_value(message.get("receivedDateTime")),
-        "body": _wrap_untrusted_body(body) if not allowed_sender else body,
+        "body": body,
         "attachments": attachments,
         "attachmentsById": attachments_by_id,
-        "isAllowedInboundSender": allowed_sender,
+        "isAllowedInboundSender": True,
     }
-    if not allowed_sender:
-        result["warning"] = UNTRUSTED_SENDER_WARNING
     return result
 
 
@@ -265,6 +321,180 @@ async def mark_unread(*, config: MailConfig, client: GraphClient, email_id: str)
     return {"success": True, "emailId": email_id, "isRead": False}
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def normalize_summary_response(
+    schema_name: str, email_id: str, internal: dict[str, object]
+) -> dict[str, object]:
+    """Normalize an internal summary wrapper into a public envelope.
+
+    Accepts only ``status="ok"`` and ``status="wrong_type"``. All other
+    shapes fall through to ``SUMMARY_INVALID_RESPONSE``.
+    """
+    if internal.get("status") == "success" and "data" in internal:
+        data = internal.get("data")
+        if isinstance(data, dict):
+            logger.debug("Unwrapping LLM result: status=%s, data_keys=%s", data.get("status"), list(data.keys()))
+            internal = data
+        else:
+            logger.warning("LLM returned non-dict data for schema=%s email=%s", schema_name, email_id)
+            return {
+                "error": "SUMMARY_INVALID_RESPONSE",
+                "message": "LLM returned non-JSON response.",
+                "schemaName": schema_name,
+                "emailId": email_id,
+            }
+
+    status = _string_value(internal.get("status"), default="")
+    reason = _string_value(internal.get("reason"))
+    logger.debug("normalize_summary_response: status=%r, reason=%r, keys=%s", status, reason, list(internal.keys()))
+
+    if status == "ok":
+        result = internal.get("result")
+        if not isinstance(result, dict):
+            return {
+                "error": "SUMMARY_INVALID_RESPONSE",
+                "message": "Summary returned status ok but result is missing or invalid.",
+                "schemaName": schema_name,
+                "emailId": email_id,
+            }
+        return {"schemaName": schema_name, "emailId": email_id, "summary": result}
+
+    if status == "wrong_type":
+        if not isinstance(reason, str) or not reason:
+            return {
+                "error": "SUMMARY_INVALID_RESPONSE",
+                "message": "Summary returned status wrong_type but reason is missing or invalid.",
+                "schemaName": schema_name,
+                "emailId": email_id,
+            }
+        return {
+            "error": "WRONG_TYPE",
+            "message": "Email content does not match the requested summary schema.",
+            "schemaName": schema_name,
+            "emailId": email_id,
+            "reason": reason,
+        }
+
+    # Unknown status or malformed wrapper
+    return {
+        "error": "SUMMARY_INVALID_RESPONSE",
+        "message": f"Summary response has unexpected structure (status={_string_value(status)!r}).",
+        "schemaName": schema_name,
+        "emailId": email_id,
+    }
+
+
+async def get_summary(
+    *,
+    ctx,
+    config: MailConfig,
+    client: GraphClient,
+    email_id: str,
+    schema_name: str = "general",
+) -> dict[str, object]:
+    """Get a schema-constrained summary of an email (trusted and untrusted senders).
+
+    Fetches the full message for sanitized body content but does NOT download
+    attachment bytes. Normalizes the internal wrapper via normalize_summary_response().
+    """
+    # Load schema
+    try:
+        spec = load_summary_schema(schema_name)
+    except SummarySchemaError as exc:
+        return {
+            "error": "SUMMARY_SCHEMA_ERROR",
+            "message": str(exc),
+        }
+
+    # Fetch full message (body needed for summarization)
+    message = await _get_message(client, email_id)
+    sender_address = _trusted_sender_address(message) or ""
+    allowed = is_allowed_sender(sender_address, config.allowed_users)
+
+    # Sanitize body
+    body = _sanitize_message_body(message)
+
+    # Build payload
+    payload: dict[str, object] = {
+        "email_id": _string_value(message.get("id"), default=email_id),
+        "subject": _string_value(message.get("subject")),
+        "from": _email_address(message.get("from")),
+        "sender": sender_address,
+        "to": _recipient_list(message.get("toRecipients")),
+        "receivedDateTime": _string_value(message.get("receivedDateTime")),
+        "isAllowedInboundSender": allowed,
+        "body": body,
+        "hasAttachments": bool(message.get("hasAttachments")),
+    }
+
+    # Build internal response schema and call Hermes LLM
+    internal_schema = build_internal_response_schema(spec.json_schema)
+    model = get_summary_model(config)
+    provider = get_summary_provider(config)
+    logger.debug(
+        "get_summary: schema=%s, model=%s, provider=%s, email_id=%s",
+        schema_name, model, provider, email_id,
+    )
+    try:
+        result = summarize_with_llm(
+            ctx=ctx,
+            system_prompt=spec.system_prompt,
+            json_schema=internal_schema,
+            payload=payload,
+            model=model,
+            provider=provider,
+        )
+    except SummaryLlmError as exc:
+        logger.warning("get_summary: SummaryLlmError: %s", exc)
+        return {"error": exc.code, "message": str(exc)}
+
+    logger.debug("get_summary: LLM result keys=%s, status=%s", list(result.keys()) if isinstance(result, dict) else "not-dict", result.get("status"))
+    normalized = normalize_summary_response(schema_name, email_id, result)
+    logger.debug("get_summary: normalized response error=%s", normalized.get("error", "none"))
+    return normalized
+
+
+async def _get_message_metadata(client: GraphClient, email_id: str) -> dict[str, object]:
+    """Fetch only metadata fields for a message — no body content."""
+    response = await client.get(
+        client.mail_url(
+            f"messages/{_path_component(email_id)}?"
+            f"$select=id,subject,from,sender,receivedDateTime,hasAttachments"
+        )
+    )
+    return cast(dict[str, object], response.json())
+
+
+def _trusted_sender_address(message: dict[str, object]) -> str | None:
+    """Extract sender email address with precedence: from → sender. Never uses replyTo.
+
+    Returns normalized (strip/lowercased) address or None if both are missing/malformed.
+    """
+    # Try from.emailAddress.address first
+    from_field = message.get("from")
+    if isinstance(from_field, dict):
+        ea = from_field.get("emailAddress")
+        if isinstance(ea, dict):
+            addr = ea.get("address")
+            if isinstance(addr, str) and addr.strip():
+                return addr.strip().lower()
+
+    # Fall back to sender.emailAddress.address
+    sender_field = message.get("sender")
+    if isinstance(sender_field, dict):
+        ea = sender_field.get("emailAddress")
+        if isinstance(ea, dict):
+            addr = ea.get("address")
+            if isinstance(addr, str) and addr.strip():
+                return addr.strip().lower()
+
+    return None
+
+
 async def _get_message(client: GraphClient, email_id: str) -> dict[str, object]:
     response = await client.get(client.mail_url(f"messages/{_path_component(email_id)}"))
     return cast(dict[str, object], response.json())
@@ -368,4 +598,4 @@ def _decode_attachment_bytes(value: object) -> bytes:
 
 
 def _path_component(value: str) -> str:
-    return quote(value, safe="")
+    return quote(value, safe="+/")

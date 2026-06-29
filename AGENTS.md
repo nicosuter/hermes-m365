@@ -69,7 +69,7 @@ No separate lint/typecheck targets exist in `pyproject.toml`. Some source files 
 | `EMAIL_ALLOWED_USERS` | **yes** | Set to `""` for deny-all. Parsed as lowercase comma-separated set. |
 | `M365_ATTACHMENT_MAX_BYTES` | no | `10485760` (10MB) |
 | `M365_EMAIL_STATE_PATH` | no | `.runtime/poll-state.json` |
-| `M365_POLL_INTERVAL_SECONDS` | no | `30` |
+| `M365_POLL_INTERVAL_SECONDS` | no | `120` |
 | `DISABLE_SEND_CONFIRM` | no | Set to `true` to bypass send confirmation token flow |
 
 Env is loaded from a `.env` at the **project root** via `load_dotenv(override=False)` inside `MailConfig.from_env()`.
