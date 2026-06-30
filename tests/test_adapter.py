@@ -14,6 +14,7 @@ import respx
 
 from config import MailConfig
 from graph import GRAPH_BASE_URL, GraphClient
+from mail_tools import _encode_email_id
 from state import PollState
 
 
@@ -292,19 +293,19 @@ _EMAIL_TOOL_PARAMS = [
     ),
     pytest.param(
         "reply_email",
-        {"email_id": "msg1", "body": "thanks"},
+        {"email_id": _encode_email_id("msg1"), "body": "thanks"},
         "messages/msg1/reply",
         id="reply_email",
     ),
     pytest.param(
         "reply_all",
-        {"email_id": "msg1", "body": "reply all"},
+        {"email_id": _encode_email_id("msg1"), "body": "reply all"},
         "messages/msg1/replyAll",
         id="reply_all",
     ),
     pytest.param(
         "forward_email",
-        {"email_id": "msg1", "to": "fwd@example.com", "body": "see below"},
+        {"email_id": _encode_email_id("msg1"), "to": "fwd@example.com", "body": "see below"},
         "messages/msg1/forward",
         id="forward_email",
     ),
@@ -387,7 +388,7 @@ async def test_confirm_email_wrapper_sends_stored_message(env, tool_name, args, 
     # Use msg2 for confirm tests to avoid endpoint collision with param args
     confirm_args = {k: v for k, v in args.items()}
     if "email_id" in confirm_args:
-        confirm_args["email_id"] = "msg2"
+        confirm_args["email_id"] = _encode_email_id("msg2")
     confirm_endpoint = endpoint.replace("msg1", "msg2")
 
     stored = await wrapper(**confirm_args)
@@ -444,7 +445,7 @@ async def test_confirm_forward_email_fails_for_expired_token(env, monkeypatch):
     _ = env
     from adapter import _ongoing_sends, forward_email_wrapper, confirm_forward_email_wrapper
 
-    stored = await forward_email_wrapper(email_id="msg1", to="fwd@example.com", body="see below")
+    stored = await forward_email_wrapper(email_id=_encode_email_id("msg1"), to="fwd@example.com", body="see below")
     token = cast(str, stored["confirmation_token"])
 
     monkeypatch.setitem(_ongoing_sends, token, {k: v for k, v in _ongoing_sends[token].items()})

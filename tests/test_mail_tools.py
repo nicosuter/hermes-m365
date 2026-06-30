@@ -11,7 +11,7 @@ import respx
 
 from config import MailConfig
 from graph import GRAPH_BASE_URL, GraphClient
-from mail_tools import _build_odata_filter, _get_message_metadata, _trusted_sender_address, get_attachment, get_email, get_summary, list_mail, normalize_summary_response, send_email
+from mail_tools import _build_odata_filter, _encode_email_id, _get_message_metadata, _trusted_sender_address, get_attachment, get_email, get_summary, list_mail, normalize_summary_response, send_email
 
 
 @pytest.fixture
@@ -157,7 +157,7 @@ async def test_list_mail_orders_filters_and_respects_top(config: MailConfig):
     assert result == {
         "emails": [
             {
-                "id": "message-1",
+                "id": _encode_email_id("message-1"),
                 "subject": "Newest",
                 "from": {"name": "Stranger", "address": "stranger@example.com"},
                 "receivedDateTime": "2026-06-17T10:00:00Z",
@@ -200,7 +200,7 @@ async def test_list_mail_unread_only_adds_isRead_filter(config: MailConfig):
     assert result == {
         "emails": [
             {
-                "id": "message-unread",
+                "id": _encode_email_id("message-unread"),
                 "subject": "Unread Email",
                 "from": {"name": "Sender", "address": "sender@example.com"},
                 "receivedDateTime": "2026-06-17T12:00:00Z",
@@ -315,15 +315,15 @@ async def test_get_email_blocks_untrusted_sender_with_metadata_only(config: Mail
     )
 
     async with GraphClient(config) as client:
-        result = await get_email(config=config, client=client, email_id="message-untrusted")
+        result = await get_email(config=config, client=client, email_id=_encode_email_id("message-untrusted"))
 
     assert metadata_route.called
     assert not full_message_route.called
     assert not attachment_route.called
     assert result == {
         "error": "EMAIL_BODY_BLOCKED_UNTRUSTED_SENDER",
-        "message": 'Email body blocked: sender is not in EMAIL_ALLOWED_USERS. Use get_summary(email_id, schema_name="general") for a schema-constrained summary.',
-        "emailId": "message-untrusted",
+        "message": "Email body blocked: sender is not in EMAIL_ALLOWED_USERS. Use list_mail to find available emails.",
+        "emailId": _encode_email_id("message-untrusted"),
         "sender": "stranger@example.com",
         "isAllowedInboundSender": False,
     }
@@ -373,7 +373,7 @@ async def test_get_email_trusted_sender_gets_full_body_and_attachments(config: M
     )
 
     async with GraphClient(config) as client:
-        result = await get_email(config=config, client=client, email_id="message-trusted")
+        result = await get_email(config=config, client=client, email_id=_encode_email_id("message-trusted"))
 
     assert result["isAllowedInboundSender"] is True
     assert "warning" not in result
@@ -421,7 +421,7 @@ async def test_get_email_trusted_sender_no_attachments(config: MailConfig):
     )
 
     async with GraphClient(config) as client:
-        result = await get_email(config=config, client=client, email_id="message-2")
+        result = await get_email(config=config, client=client, email_id=_encode_email_id("message-2"))
 
     assert result["isAllowedInboundSender"] is True
     assert "warning" not in result
@@ -449,13 +449,13 @@ async def test_get_attachment_blocks_untrusted_sender_without_fetching_or_writin
     )
 
     async with GraphClient(config) as client:
-        result = await get_attachment(config=config, client=client, email_id="message-1", attachment_id="attachment-1")
+        result = await get_attachment(config=config, client=client, email_id=_encode_email_id("message-1"), attachment_id="attachment-1")
 
     assert result == {
         "error": "ATTACHMENT_BLOCKED_UNTRUSTED_SENDER",
         "message": "Attachment blocked: sender is not in EMAIL_ALLOWED_USERS.",
         "sender": "stranger@example.com",
-        "emailId": "message-1",
+        "emailId": _encode_email_id("message-1"),
         "attachmentId": "attachment-1",
     }
     assert not attachment_route.called
@@ -491,7 +491,7 @@ async def test_get_attachment_fetches_allowed_sender_enforces_size_and_saves_fil
     )
 
     async with GraphClient(config) as client:
-        result = await get_attachment(config=config, client=client, email_id="message-2", attachment_id="attachment-2")
+        result = await get_attachment(config=config, client=client, email_id=_encode_email_id("message-2"), attachment_id="attachment-2")
 
     saved_path = mail_tools.build_saved_path("attachment-2", "../invoice.pdf")
     assert result == {
@@ -530,7 +530,7 @@ async def test_get_attachment_rejects_oversized_attachment_before_writing(config
 
     async with GraphClient(config) as client:
         with pytest.raises(ValueError, match="exceeding maximum allowed size"):
-            await get_attachment(config=config, client=client, email_id="message-3", attachment_id="attachment-3")
+            await get_attachment(config=config, client=client, email_id=_encode_email_id("message-3"), attachment_id="attachment-3")
 
     assert not (tmp_path / ".hermes").exists()
 
@@ -620,9 +620,9 @@ async def test_mark_read_sets_isRead_true(config: MailConfig):
     )
 
     async with GraphClient(config) as client:
-        result = await mark_read(config=config, client=client, email_id="message-1")
+        result = await mark_read(config=config, client=client, email_id=_encode_email_id("message-1"))
 
-    assert result == {"success": True, "emailId": "message-1", "isRead": True}
+    assert result == {"success": True, "emailId": _encode_email_id("message-1"), "isRead": True}
     assert patch_route.called
     payload = patch_route.calls.last.request.read().decode()
     assert payload == '{"isRead":true}'
@@ -639,9 +639,9 @@ async def test_mark_unread_sets_isRead_false(config: MailConfig):
     )
 
     async with GraphClient(config) as client:
-        result = await mark_unread(config=config, client=client, email_id="message-2")
+        result = await mark_unread(config=config, client=client, email_id=_encode_email_id("message-2"))
 
-    assert result == {"success": True, "emailId": "message-2", "isRead": False}
+    assert result == {"success": True, "emailId": _encode_email_id("message-2"), "isRead": False}
     assert patch_route.called
     payload = patch_route.calls.last.request.read().decode()
     assert payload == '{"isRead":false}'
@@ -658,7 +658,7 @@ async def test_reply_email_posts_to_reply_endpoint(config: MailConfig):
     )
 
     async with GraphClient(config) as client:
-        result = await reply_email(config=config, client=client, email_id="message-1", body="Replied!")
+        result = await reply_email(config=config, client=client, email_id=_encode_email_id("message-1"), body="Replied!")
 
     assert result == {"success": True, "statusCode": 200}
     assert reply_route.called
@@ -678,7 +678,7 @@ async def test_reply_email_posts_html_when_content_type_html(config: MailConfig)
 
     async with GraphClient(config) as client:
         result = await reply_email(
-            config=config, client=client, email_id="message-1", body="<h1>HTML Reply</h1>", content_type="html"
+            config=config, client=client, email_id=_encode_email_id("message-1"), body="<h1>HTML Reply</h1>", content_type="html"
         )
 
     assert result == {"success": True, "statusCode": 200}
@@ -699,7 +699,7 @@ async def test_reply_all_posts_to_replyAll_endpoint(config: MailConfig):
     )
 
     async with GraphClient(config) as client:
-        result = await reply_all(config=config, client=client, email_id="message-1", body="Replied to all!")
+        result = await reply_all(config=config, client=client, email_id=_encode_email_id("message-1"), body="Replied to all!")
 
     assert result == {"success": True, "statusCode": 200}
     assert reply_route.called
@@ -719,7 +719,7 @@ async def test_reply_all_posts_html_when_content_type_html(config: MailConfig):
 
     async with GraphClient(config) as client:
         result = await reply_all(
-            config=config, client=client, email_id="message-1", body="<p>HTML reply all</p>", content_type="html"
+            config=config, client=client, email_id=_encode_email_id("message-1"), body="<p>HTML reply all</p>", content_type="html"
         )
 
     assert result == {"success": True, "statusCode": 200}
@@ -741,7 +741,7 @@ async def test_forward_email_posts_to_forward_endpoint_with_recipients(config: M
 
     async with GraphClient(config) as client:
         result = await forward_email(
-            config=config, client=client, email_id="message-1", to="new@example.com", body="FW: forwarded"
+            config=config, client=client, email_id=_encode_email_id("message-1"), to="new@example.com", body="FW: forwarded"
         )
 
     assert result == {"success": True, "statusCode": 200}
@@ -762,7 +762,7 @@ async def test_forward_email_posts_html_when_content_type_html(config: MailConfi
 
     async with GraphClient(config) as client:
         result = await forward_email(
-            config=config, client=client, email_id="message-1", to="new@example.com", body="<p>HTML forward</p>", content_type="html"
+            config=config, client=client, email_id=_encode_email_id("message-1"), to="new@example.com", body="<p>HTML forward</p>", content_type="html"
         )
 
     assert result == {"success": True, "statusCode": 200}
@@ -867,7 +867,7 @@ async def test_get_summary_returns_llm_error_when_ctx_is_none(config: MailConfig
     )
 
     async with GraphClient(config) as client:
-        result = await get_summary(config=config, client=client, ctx=None, email_id="msg-1")
+        result = await get_summary(config=config, client=client, ctx=None, email_id=_encode_email_id("msg-1"))
 
     assert result.get("error") == "SUMMARY_LLM_ERROR"
 
@@ -907,7 +907,7 @@ async def test_get_summary_returns_schema_error_for_unknown_schema_name(tmp_path
     ))
 
     async with GraphClient(good_cfg) as client:
-        result = await get_summary(config=good_cfg, client=client, ctx=None, email_id="msg-schema", schema_name="nonexistent")
+        result = await get_summary(config=good_cfg, client=client, ctx=None, email_id=_encode_email_id("msg-schema"), schema_name="nonexistent")
 
     assert result.get("error") == "SUMMARY_SCHEMA_ERROR"
     assert "nonexistent" in str(result.get("message", ""))
@@ -971,10 +971,10 @@ async def test_get_summary_works_for_untrusted_sender(tmp_path, monkeypatch: pyt
     monkeypatch.setattr(mt_mod, "summarize_with_llm", fake_summarize)
 
     async with GraphClient(good_cfg) as client:
-        result = await get_summary(config=good_cfg, client=client, ctx=None, email_id="msg-untrusted-summary", schema_name="general")
+        result = await get_summary(config=good_cfg, client=client, ctx=None, email_id=_encode_email_id("msg-untrusted-summary"), schema_name="general")
 
     assert not attachment_route.called  # attachments were NOT fetched
-    assert result == {"schemaName": "general", "emailId": "msg-untrusted-summary", "summary": {"summary": "Suspicious email detected."}}
+    assert result == {"schemaName": "general", "emailId": _encode_email_id("msg-untrusted-summary"), "summary": {"summary": "Suspicious email detected."}}
 
 
 @pytest.mark.asyncio
@@ -1026,7 +1026,7 @@ async def test_get_summary_works_for_trusted_sender(tmp_path, monkeypatch: pytes
     monkeypatch.setattr(mt_mod, "summarize_with_llm", fake_summarize)
 
     async with GraphClient(good_cfg) as client:
-        result = await get_summary(config=good_cfg, client=client, ctx=None, email_id="msg-trusted-summary")
+        result = await get_summary(config=good_cfg, client=client, ctx=None, email_id=_encode_email_id("msg-trusted-summary"))
 
     assert len(captured_payloads) == 1
     payload = captured_payloads[0]
@@ -1041,7 +1041,7 @@ async def test_get_summary_works_for_trusted_sender(tmp_path, monkeypatch: pytes
     assert "Results look" in payload["body"]
     assert "<b>" not in payload["body"]
 
-    assert result == {"schemaName": "general", "emailId": "msg-trusted-summary", "summary": {"summary": "Quarterly results are positive."}}
+    assert result == {"schemaName": "general", "emailId": _encode_email_id("msg-trusted-summary"), "summary": {"summary": "Quarterly results are positive."}}
 
 
 @pytest.mark.asyncio
@@ -1089,7 +1089,7 @@ async def test_get_summary_propagates_llm_error_code(tmp_path, monkeypatch: pyte
     monkeypatch.setattr(mt_mod, "summarize_with_llm", fake_refusal)
 
     async with GraphClient(good_cfg) as client:
-        result = await get_summary(config=good_cfg, client=client, ctx=None, email_id="msg-refused")
+        result = await get_summary(config=good_cfg, client=client, ctx=None, email_id=_encode_email_id("msg-refused"))
 
     assert result == {"error": "SUMMARY_REFUSED", "message": "Model refused to generate summary"}
 
@@ -1103,12 +1103,12 @@ def test_normalize_summary_response_ok_returns_clean_envelope():
     """Status ok with dict result returns clean envelope without internal keys."""
     result = normalize_summary_response(
         schema_name="general",
-        email_id="msg-42",
+        email_id=_encode_email_id("msg-42"),
         internal={"status": "ok", "reason": None, "result": {"summary": "Good."}},
     )
     assert result == {
         "schemaName": "general",
-        "emailId": "msg-42",
+        "emailId": _encode_email_id("msg-42"),
         "summary": {"summary": "Good."},
     }
     # Must NOT contain internal keys
@@ -1120,7 +1120,7 @@ def test_normalize_summary_response_ok_with_nested_result():
     """Status ok with nested dict result passes through intact."""
     result = normalize_summary_response(
         schema_name="detailed",
-        email_id="msg-99",
+        email_id=_encode_email_id("msg-99"),
         internal={
             "status": "ok",
             "reason": None,
@@ -1132,7 +1132,7 @@ def test_normalize_summary_response_ok_with_nested_result():
         },
     )
     assert result["schemaName"] == "detailed"
-    assert result["emailId"] == "msg-99"
+    assert result["emailId"] == _encode_email_id("msg-99")
     assert result["summary"]["subject"] == "Q2 Results"
     assert result["summary"]["actionItems"] == ["Follow up on budget"]
 
@@ -1141,14 +1141,14 @@ def test_normalize_summary_response_wrong_type_returns_error():
     """Status wrong_type returns WRONG_TYPE error envelope."""
     result = normalize_summary_response(
         schema_name="general",
-        email_id="msg-10",
+        email_id=_encode_email_id("msg-10"),
         internal={"status": "wrong_type", "reason": "Content is a calendar invite.", "result": None},
     )
     assert result == {
         "error": "WRONG_TYPE",
         "message": "Email content does not match the requested summary schema.",
         "schemaName": "general",
-        "emailId": "msg-10",
+        "emailId": _encode_email_id("msg-10"),
         "reason": "Content is a calendar invite.",
     }
 
@@ -1157,7 +1157,7 @@ def test_normalize_summary_response_wrong_type_missing_reason_returns_invalid():
     """Status wrong_type with missing/null reason returns SUMMARY_INVALID_RESPONSE."""
     result = normalize_summary_response(
         schema_name="general",
-        email_id="msg-11",
+        email_id=_encode_email_id("msg-11"),
         internal={"status": "wrong_type", "reason": None, "result": None},
     )
     assert result["error"] == "SUMMARY_INVALID_RESPONSE"
@@ -1168,20 +1168,20 @@ def test_normalize_summary_response_ok_null_result_falls_through():
     """Status ok with null result falls through to SUMMARY_INVALID_RESPONSE."""
     result = normalize_summary_response(
         schema_name="general",
-        email_id="msg-bad",
+        email_id=_encode_email_id("msg-bad"),
         internal={"status": "ok", "reason": None, "result": None},
     )
     assert result["error"] == "SUMMARY_INVALID_RESPONSE"
     assert "missing or invalid" in str(result.get("message", ""))
     assert result["schemaName"] == "general"
-    assert result["emailId"] == "msg-bad"
+    assert result["emailId"] == _encode_email_id("msg-bad")
 
 
 def test_normalize_summary_response_ok_list_result_falls_through():
     """Status ok with list result falls through to SUMMARY_INVALID_RESPONSE."""
     result = normalize_summary_response(
         schema_name="general",
-        email_id="msg-bad-2",
+        email_id=_encode_email_id("msg-bad-2"),
         internal={"status": "ok", "reason": None, "result": [{"key": "val"}]},
     )
     assert result["error"] == "SUMMARY_INVALID_RESPONSE"
@@ -1192,33 +1192,33 @@ def test_normalize_summary_response_unknown_status_falls_through():
     """Unknown status falls through to SUMMARY_INVALID_RESPONSE."""
     result = normalize_summary_response(
         schema_name="general",
-        email_id="msg-err",
+        email_id=_encode_email_id("msg-err"),
         internal={"status": "error", "reason": "timeout", "result": None},
     )
     assert result["error"] == "SUMMARY_INVALID_RESPONSE"
     assert "status='error'" in str(result.get("message", ""))
     assert result["schemaName"] == "general"
-    assert result["emailId"] == "msg-err"
+    assert result["emailId"] == _encode_email_id("msg-err")
 
 
 def test_normalize_summary_response_empty_dict_falls_through():
     """Empty internal dict falls through to SUMMARY_INVALID_RESPONSE."""
     result = normalize_summary_response(
         schema_name="detailed",
-        email_id="msg-empty",
+        email_id=_encode_email_id("msg-empty"),
         internal={},
     )
     assert result["error"] == "SUMMARY_INVALID_RESPONSE"
     assert "status=''" in str(result.get("message", ""))
     assert result["schemaName"] == "detailed"
-    assert result["emailId"] == "msg-empty"
+    assert result["emailId"] == _encode_email_id("msg-empty")
 
 
 def test_normalize_summary_response_no_alternate_schemas_in_wrong_type():
     """Wrong_type error must NOT suggest alternate schema names."""
     result = normalize_summary_response(
         schema_name="invoice",
-        email_id="msg-inv",
+        email_id=_encode_email_id("msg-inv"),
         internal={"status": "wrong_type", "reason": "Not an invoice.", "result": None},
     )
     assert result["error"] == "WRONG_TYPE"
@@ -1273,13 +1273,13 @@ async def test_get_summary_uses_normalize_summary_response(tmp_path, monkeypatch
     monkeypatch.setattr(mt_mod, "summarize_with_llm", fake_summarize)
 
     async with GraphClient(good_cfg) as client:
-        result = await get_summary(config=good_cfg, client=client, ctx=None, email_id="msg-wrong-type")
+        result = await get_summary(config=good_cfg, client=client, ctx=None, email_id=_encode_email_id("msg-wrong-type"))
 
     assert result == {
         "error": "WRONG_TYPE",
         "message": "Email content does not match the requested summary schema.",
         "schemaName": "general",
-        "emailId": "msg-wrong-type",
+        "emailId": _encode_email_id("msg-wrong-type"),
         "reason": "Calendar event, not email.",
     }
     # Internal keys must NOT leak
@@ -1291,13 +1291,36 @@ def test_normalize_summary_response_unwraps_llm_wrapper():
     """normalize_summary_response unwraps summarize_with_llm wrapper."""
     result = normalize_summary_response(
         schema_name="general",
-        email_id="msg-42",
+        email_id=_encode_email_id("msg-42"),
         internal={"status": "success", "data": {"status": "ok", "reason": None, "result": {"summary": "Good."}}},
     )
     assert result == {
         "schemaName": "general",
-        "emailId": "msg-42",
+        "emailId": _encode_email_id("msg-42"),
         "summary": {"summary": "Good."},
+    }
+
+
+def test_normalize_summary_response_unwraps_nested_success_wrappers():
+    result = normalize_summary_response(
+        schema_name="newsletter",
+        email_id=_encode_email_id("msg-nested"),
+        internal={
+            "status": "success",
+            "data": {
+                "status": "success",
+                "data": {
+                    "status": "ok",
+                    "reason": None,
+                    "result": {"headline": "Market update"},
+                },
+            },
+        },
+    )
+    assert result == {
+        "schemaName": "newsletter",
+        "emailId": _encode_email_id("msg-nested"),
+        "summary": {"headline": "Market update"},
     }
 
 
@@ -1305,7 +1328,7 @@ def test_normalize_summary_response_unwraps_llm_wrapper_wrong_type():
     """Unwrap LLM wrapper with wrong_type status."""
     result = normalize_summary_response(
         schema_name="general",
-        email_id="msg-43",
+        email_id=_encode_email_id("msg-43"),
         internal={"status": "success", "data": {"status": "wrong_type", "reason": "Calendar invite.", "result": None}},
     )
     assert result["error"] == "WRONG_TYPE"
@@ -1316,7 +1339,7 @@ def test_normalize_summary_response_non_dict_data_fails():
     """LLM wrapper with non-dict data returns SUMMARY_INVALID_RESPONSE."""
     result = normalize_summary_response(
         schema_name="general",
-        email_id="msg-44",
+        email_id=_encode_email_id("msg-44"),
         internal={"status": "success", "data": "raw text response"},
     )
     assert result["error"] == "SUMMARY_INVALID_RESPONSE"

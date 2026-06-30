@@ -64,9 +64,9 @@ def test_success_with_parsed_result():
 
 
 def test_success_with_text_fallback():
-    """When parsed is None but text exists, return text."""
+    """When parsed is None but text is valid JSON, parse it."""
     mock_ctx = _FakeCtx()
-    mock_ctx._result = _FakeStructuredResult(parsed=None, text="plain text response")
+    mock_ctx._result = _FakeStructuredResult(parsed=None, text='{"status": "ok", "result": {"topic": "Q3"}}')
 
     result = summarize_with_llm(
         ctx=mock_ctx,
@@ -75,7 +75,7 @@ def test_success_with_text_fallback():
         payload=_PAYLOAD,
     )
     assert result["status"] == "success"
-    assert result["data"] == "plain text response"
+    assert result["data"]["result"]["topic"] == "Q3"
 
 
 def test_success_with_model_override():
@@ -145,9 +145,12 @@ def test_success_without_provider():
 # ---------------------------------------------------------------------------
 
 def test_empty_response_raises():
-    """Empty response (no parsed, no text) raises SummaryLlmError."""
+    """Empty response (no parsed, no text) raises SummaryLlmError after fallback."""
     mock_ctx = _FakeCtx()
-    mock_ctx._result = _FakeStructuredResult(parsed=None, text=None)
+    mock_ctx._result = [
+        _FakeStructuredResult(parsed=None, text=None),
+        _FakeStructuredResult(parsed=None, text=None),
+    ]
 
     with pytest.raises(SummaryLlmError) as exc:
         summarize_with_llm(
@@ -157,7 +160,7 @@ def test_empty_response_raises():
             payload=_PAYLOAD,
         )
     assert exc.value.code == "SUMMARY_LLM_ERROR"
-    assert "empty response" in str(exc.value)
+    assert "non-JSON" in str(exc.value)
 
 
 def test_value_error_raises():
@@ -219,7 +222,7 @@ def test_instructions_and_payload_passed():
         payload=_PAYLOAD,
     )
 
-    assert mock_ctx._last_instructions == "Extract the content into the provided schema."
+    assert "Extract the content into the provided schema" in mock_ctx._last_instructions
     input_blocks = mock_ctx._last_input
     assert isinstance(input_blocks, list) and len(input_blocks) == 1
     assert input_blocks[0]["type"] == "text"
@@ -274,16 +277,18 @@ class _FakeStructuredResult:
 class _FakeLlm:
     def __init__(self, ctx: _FakeCtx) -> None:
         self._ctx = ctx
+        self._call_count = 0
 
     def complete_structured(
         self,
         instructions: str,
         input: Any,
-        json_schema: dict,
+        json_schema: dict | None = None,
         system_prompt: str | None = None,
         model: str | None = None,
         provider: str | None = None,
         purpose: str | None = None,
+        json_mode: bool = False,
         **kwargs: Any,
     ) -> _FakeStructuredResult:
         self._ctx._last_instructions = instructions
@@ -293,15 +298,20 @@ class _FakeLlm:
         self._ctx._last_model = model
         self._ctx._last_provider = provider
         self._ctx._last_purpose = purpose
+        self._ctx._last_json_mode = json_mode
+        self._call_count += 1
 
         if self._ctx._exc:
             raise self._ctx._exc
+        if isinstance(self._ctx._result, list):
+            idx = min(self._call_count - 1, len(self._ctx._result) - 1)
+            return self._ctx._result[idx]
         return self._ctx._result
 
 
 class _FakeCtx:
     def __init__(self) -> None:
-        self._result = _FakeStructuredResult(parsed={"status": "ok", "reason": None, "result": {}})
+        self._result: Any = _FakeStructuredResult(parsed={"status": "ok", "reason": None, "result": {}})
         self._exc: Exception | None = None
         self._last_instructions: str = ""
         self._last_input: Any = ""
@@ -309,4 +319,5 @@ class _FakeCtx:
         self._last_model: str | None = None
         self._last_provider: str | None = None
         self._last_purpose: str | None = None
+        self._last_json_mode: bool = False
         self.llm = _FakeLlm(self)

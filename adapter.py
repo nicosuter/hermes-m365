@@ -823,29 +823,6 @@ def register(ctx):
         is_async=True,
     )
     ctx.register_tool(
-        name="list_mail",
-        toolset="m365_email",
-        schema={
-            "name": "list_mail",
-            "description": "List recent emails in inbox",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "unreadOnly": {"type": "boolean", "default": True, "description": "Only return unread emails"},
-                    "top": {"type": "integer", "default": 25, "description": "Maximum number of emails to return"},
-                    "from": {"type": "string", "description": "Filter by sender email address (exact match)"},
-                    "subjectContains": {"type": "string", "description": "Filter by subject containing this text (case-insensitive)"},
-                    "dateAfter": {"type": "string", "description": "Only emails received after this ISO 8601 datetime (e.g. '2024-01-01T00:00:00Z')"},
-                    "dateBefore": {"type": "string", "description": "Only emails received before this ISO 8601 datetime"},
-                    "hasAttachments": {"type": "boolean", "description": "Filter by attachment presence (true=only with attachments, false=only without)"},
-                },
-                "required": [],
-            },
-        },
-        handler=list_mail_wrapper,
-        is_async=True,
-    )
-    ctx.register_tool(
         name="reply_email",
         toolset="m365_email",
         schema={

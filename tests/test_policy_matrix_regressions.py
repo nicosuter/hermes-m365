@@ -13,7 +13,7 @@ import respx
 
 from config import MailConfig
 from graph import GRAPH_BASE_URL, GraphClient
-from mail_tools import get_attachment, get_email, list_mail
+from mail_tools import _encode_email_id, get_attachment, get_email, list_mail
 
 
 class _MailToolsModule(Protocol):
@@ -96,8 +96,8 @@ async def test_policy_allowed_inbound_sender_can_read_and_fetch_attachment(
     )
 
     async with GraphClient(config) as client:
-        email = await get_email(config=config, client=client, email_id="allowed-message")
-        attachment = await get_attachment(config=config, client=client, email_id="allowed-message", attachment_id="att-allowed")
+        email = await get_email(config=config, client=client, email_id=_encode_email_id("allowed-message"))
+        attachment = await get_attachment(config=config, client=client, email_id=_encode_email_id("allowed-message"), attachment_id="att-allowed")
 
     assert email["isAllowedInboundSender"] is True
     assert "warning" not in email
@@ -146,7 +146,7 @@ async def test_policy_dropped_sender_manual_list_and_read_blocks_untrusted(confi
 
     async with GraphClient(config) as client:
         listed = await list_mail(config=config, client=client, unreadOnly=False)
-        email = await get_email(config=config, client=client, email_id="dropped-message")
+        email = await get_email(config=config, client=client, email_id=_encode_email_id("dropped-message"))
 
     assert inbox_route.called
     assert metadata_route.called
@@ -179,13 +179,13 @@ async def test_policy_dropped_sender_attachment_is_no_op_and_never_fetches_bytes
     )
 
     async with GraphClient(config) as client:
-        result = await get_attachment(config=config, client=client, email_id="dropped-message", attachment_id="att-dropped")
+        result = await get_attachment(config=config, client=client, email_id=_encode_email_id("dropped-message"), attachment_id="att-dropped")
 
     assert result == {
         "error": "ATTACHMENT_BLOCKED_UNTRUSTED_SENDER",
         "message": "Attachment blocked: sender is not in EMAIL_ALLOWED_USERS.",
         "sender": "stranger@example.com",
-        "emailId": "dropped-message",
+        "emailId": _encode_email_id("dropped-message"),
         "attachmentId": "att-dropped",
     }
     assert not attachment_route.called
@@ -211,8 +211,8 @@ async def test_duplicate_filenames_save_to_distinct_deterministic_paths(
     )
 
     async with GraphClient(config) as client:
-        first = await get_attachment(config=config, client=client, email_id="allowed-message", attachment_id="attachment-one")
-        second = await get_attachment(config=config, client=client, email_id="allowed-message", attachment_id="attachment-two")
+        first = await get_attachment(config=config, client=client, email_id=_encode_email_id("allowed-message"), attachment_id="attachment-one")
+        second = await get_attachment(config=config, client=client, email_id=_encode_email_id("allowed-message"), attachment_id="attachment-two")
 
     first_path = Path(cast(str, first["savedPath"]))
     second_path = Path(cast(str, second["savedPath"]))
@@ -239,7 +239,7 @@ async def test_message_deleted_before_attachment_fetch_raises_404_without_writin
 
     async with GraphClient(config) as client:
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
-            await get_attachment(config=config, client=client, email_id="deleted-message", attachment_id="att-missing")
+            await get_attachment(config=config, client=client, email_id=_encode_email_id("deleted-message"), attachment_id="att-missing")
 
     assert exc_info.value.response.status_code == 404
     assert not (tmp_path / ".hermes").exists()

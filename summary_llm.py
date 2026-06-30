@@ -46,40 +46,60 @@ def summarize_with_llm(
     payload_json = json.dumps(payload, ensure_ascii=False)
     effective_prompt = _TRUSTED_PROMPT if payload.get("isAllowedInboundSender") else system_prompt
 
-    try:
-        kwargs: dict = {"purpose": "email.summarize"}
-        if model:
-            kwargs["model"] = model
-        if provider:
-            kwargs["provider"] = provider
+    call_kwargs: dict = {"purpose": "email.summarize"}
+    if model:
+        call_kwargs["model"] = model
+    if provider:
+        call_kwargs["provider"] = provider
 
+    def _try_parse(text: str) -> dict | None:
+        try:
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, dict) else None
+        except (json.JSONDecodeError, ValueError):
+            return None
+
+    def _make_call(schema: dict | None, use_json_mode: bool) -> dict:
         result = ctx.llm.complete_structured(
-            instructions="Extract the content into the provided schema.",
+            instructions="Extract the content into the provided schema. Return your response as a JSON object matching the schema exactly.",
             input=[{"type": "text", "text": payload_json}],
-            json_schema=json_schema,
+            json_schema=schema,
+            json_mode=use_json_mode,
             system_prompt=effective_prompt,
-            **kwargs,
+            **call_kwargs,
         )
-
         if result.parsed is not None:
             logger.debug("LLM summary parsed successfully, keys: %s", list(result.parsed.keys()) if isinstance(result.parsed, dict) else "not-dict")
             return {"status": "success", "data": result.parsed}
-
         if result.text:
-            logger.debug("LLM summary returned text (no parsed), length=%d, first_200=%s", len(result.text), str(result.text)[:200])
-            return {"status": "success", "data": result.text}
+            parsed_text = _try_parse(result.text)
+            if parsed_text is not None:
+                logger.debug("LLM summary parsed from text, keys: %s", list(parsed_text.keys()))
+                return {"status": "success", "data": parsed_text}
+        return {"status": "fail", "data": None}
 
-        logger.warning(
-            "LLM returned empty response. result attrs: parsed=%r, text=%r, dir=%s",
-            result.parsed,
-            str(result.text)[:200] if result.text else None,
-            [a for a in dir(result) if not a.startswith("_")],
-        )
-        raise SummaryLlmError("LLM returned empty response (parsed=None, text=None)")
+    def _wrap_call(schema: dict | None, use_json_mode: bool) -> dict:
+        try:
+            return _make_call(schema, use_json_mode)
+        except SummaryLlmError:
+            raise
+        except ValueError as e:
+            raise SummaryLlmError(f"Schema validation failed: {e}") from e
+        except Exception as e:
+            raise SummaryLlmError(f"Email summarization failed: {e}") from e
 
-    except SummaryLlmError:
-        raise
-    except ValueError as e:
-        raise SummaryLlmError(f"Schema validation failed: {e}") from e
-    except Exception as e:
-        raise SummaryLlmError(f"Email summarization failed: {e}") from e
+    result = _wrap_call(json_schema, False)
+    if result["status"] == "success":
+        return result
+
+    logger.warning(
+        "json_schema response format failed (model may not support it), falling back to json_mode"
+    )
+    result = _wrap_call(None, True)
+    if result["status"] == "success":
+        return result
+
+    raise SummaryLlmError(
+        "LLM returned non-JSON response even with json_mode fallback. "
+        "Model may not support structured output."
+    )

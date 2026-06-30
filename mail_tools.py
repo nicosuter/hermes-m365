@@ -9,6 +9,17 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import quote, quote_plus
 
+
+def _encode_email_id(raw_id: str) -> str:
+    """Encode a raw Graph message ID into a URL-safe base64 string without padding."""
+    return base64.urlsafe_b64encode(raw_id.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _decode_email_id(encoded_id: str) -> str:
+    """Decode a base64-encoded email ID back to the raw Graph message ID."""
+    padded = encoded_id + "=" * (-len(encoded_id) % 4)
+    return base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+
 from attachments import build_saved_path, check_attachment_sender, enforce_attachment_size, sanitize_filename
 from config import MailConfig, MailConfigError, get_summary_model, get_summary_provider, is_allowed_sender
 from graph import GraphClient
@@ -112,25 +123,27 @@ async def list_mail(
 
 
 async def get_email(*, config: MailConfig, client: GraphClient, email_id: str) -> dict[str, object]:
+    raw_email_id = _decode_email_id(email_id)
+
     # Step 1: Fetch metadata only — check allowlist before fetching body
-    metadata = await _get_message_metadata(client, email_id)
+    metadata = await _get_message_metadata(client, raw_email_id)
     sender_address = _trusted_sender_address(metadata) or ""
     allowed_sender = is_allowed_sender(sender_address, config.allowed_users)
 
     if not allowed_sender:
         return {
             "error": "EMAIL_BODY_BLOCKED_UNTRUSTED_SENDER",
-            "message": "Email body blocked: sender is not in EMAIL_ALLOWED_USERS. Use get_summary(email_id, schema_name=\"general\") for a schema-constrained summary.",
-            "emailId": _string_value(metadata.get("id"), default=email_id),
+            "message": "Email body blocked: sender is not in EMAIL_ALLOWED_USERS. Use list_mail to find available emails.",
+            "emailId": email_id,
             "sender": sender_address,
             "isAllowedInboundSender": False,
         }
 
     # Step 2: Allowed sender — fetch full message
-    message = await _get_message(client, email_id)
+    message = await _get_message(client, raw_email_id)
     sender = _email_address(message.get("from"))
 
-    attachments = await _get_attachment_metadata(client, email_id) if bool(message.get("hasAttachments")) else []
+    attachments = await _get_attachment_metadata(client, raw_email_id) if bool(message.get("hasAttachments")) else []
     inline_attachments = [attachment for attachment in attachments if bool(attachment.get("isInline"))]
 
     raw_body = _sanitize_message_body(message)
@@ -166,7 +179,8 @@ async def get_email(*, config: MailConfig, client: GraphClient, email_id: str) -
 
 
 async def get_attachment(*, config: MailConfig, client: GraphClient, email_id: str, attachment_id: str) -> dict[str, object]:
-    message = await _get_message(client, email_id)
+    raw_email_id = _decode_email_id(email_id)
+    message = await _get_message(client, raw_email_id)
     sender_address = _address_text(_email_address(message.get("from")))
     sender_allowed, _ = check_attachment_sender(sender_address, config.allowed_users)
     if not sender_allowed:
@@ -178,7 +192,7 @@ async def get_attachment(*, config: MailConfig, client: GraphClient, email_id: s
             "attachmentId": attachment_id,
         }
 
-    response = await client.get(client.mail_url(f"messages/{_path_component(email_id)}/attachments/{_path_component(attachment_id)}"))
+    response = await client.get(client.mail_url(f"messages/{_path_component(raw_email_id)}/attachments/{_path_component(attachment_id)}"))
     attachment = cast(dict[str, object], response.json())
     filename = sanitize_filename(_string_value(attachment.get("name"), default="attachment"))
     mime_type = _string_value(attachment.get("contentType"), default="application/octet-stream")
@@ -248,9 +262,10 @@ async def reply_email(
     content_type: str = "text",
 ) -> dict[str, object]:
     _ = config
+    raw_email_id = _decode_email_id(email_id)
     graph_content_type = "html" if content_type.lower() == "html" else "text"
     response = await client.post(
-        client.mail_url(f"messages/{_path_component(email_id)}/reply"),
+        client.mail_url(f"messages/{_path_component(raw_email_id)}/reply"),
         json={"message": {"body": {"contentType": graph_content_type, "content": body}}},
     )
     return {"success": 200 <= response.status_code < 300, "statusCode": response.status_code}
@@ -270,9 +285,10 @@ async def reply_all(
         content_type: "text" or "html". Defaults to "text".
     """
     _ = config
+    raw_email_id = _decode_email_id(email_id)
     graph_content_type = "html" if content_type.lower() == "html" else "text"
     response = await client.post(
-        client.mail_url(f"messages/{_path_component(email_id)}/replyAll"),
+        client.mail_url(f"messages/{_path_component(raw_email_id)}/replyAll"),
         json={"message": {"body": {"contentType": graph_content_type, "content": body}}},
     )
     return {"success": 200 <= response.status_code < 300, "statusCode": response.status_code}
@@ -293,10 +309,11 @@ async def forward_email(
         content_type: "text" or "html". Defaults to "text".
     """
     _ = config
+    raw_email_id = _decode_email_id(email_id)
     recipients = [to] if isinstance(to, str) else to
     graph_content_type = "html" if content_type.lower() == "html" else "text"
     response = await client.post(
-        client.mail_url(f"messages/{_path_component(email_id)}/forward"),
+        client.mail_url(f"messages/{_path_component(raw_email_id)}/forward"),
         json={
             "message": {
                 "body": {"contentType": graph_content_type, "content": body},
@@ -310,14 +327,16 @@ async def forward_email(
 async def mark_read(*, config: MailConfig, client: GraphClient, email_id: str) -> dict[str, object]:
     """Mark an email as read by setting isRead=true."""
     _ = config
-    await client.patch(client.mail_url(f"messages/{_path_component(email_id)}"), json={"isRead": True})
+    raw_email_id = _decode_email_id(email_id)
+    await client.patch(client.mail_url(f"messages/{_path_component(raw_email_id)}"), json={"isRead": True})
     return {"success": True, "emailId": email_id, "isRead": True}
 
 
 async def mark_unread(*, config: MailConfig, client: GraphClient, email_id: str) -> dict[str, object]:
     """Mark an email as unread by setting isRead=false."""
     _ = config
-    await client.patch(client.mail_url(f"messages/{_path_component(email_id)}"), json={"isRead": False})
+    raw_email_id = _decode_email_id(email_id)
+    await client.patch(client.mail_url(f"messages/{_path_component(raw_email_id)}"), json={"isRead": False})
     return {"success": True, "emailId": email_id, "isRead": False}
 
 
@@ -334,11 +353,11 @@ def normalize_summary_response(
     Accepts only ``status="ok"`` and ``status="wrong_type"``. All other
     shapes fall through to ``SUMMARY_INVALID_RESPONSE``.
     """
-    if internal.get("status") == "success" and "data" in internal:
+    while internal.get("status") == "success" and "data" in internal:
         data = internal.get("data")
         if isinstance(data, dict):
             logger.debug("Unwrapping LLM result: status=%s, data_keys=%s", data.get("status"), list(data.keys()))
-            internal = data
+            internal = cast(dict[str, object], data)
         else:
             logger.warning("LLM returned non-dict data for schema=%s email=%s", schema_name, email_id)
             return {
@@ -401,6 +420,8 @@ async def get_summary(
     Fetches the full message for sanitized body content but does NOT download
     attachment bytes. Normalizes the internal wrapper via normalize_summary_response().
     """
+    raw_email_id = _decode_email_id(email_id)
+
     # Load schema
     try:
         spec = load_summary_schema(schema_name)
@@ -411,7 +432,7 @@ async def get_summary(
         }
 
     # Fetch full message (body needed for summarization)
-    message = await _get_message(client, email_id)
+    message = await _get_message(client, raw_email_id)
     sender_address = _trusted_sender_address(message) or ""
     allowed = is_allowed_sender(sender_address, config.allowed_users)
 
@@ -511,7 +532,7 @@ async def _get_attachment_metadata(client: GraphClient, email_id: str) -> list[d
 
 def _message_summary(message: dict[str, object]) -> dict[str, object]:
     return {
-        "id": _string_value(message.get("id")),
+        "id": _encode_email_id(_string_value(message.get("id"))),
         "subject": _string_value(message.get("subject")),
         "from": _email_address(message.get("from")),
         "receivedDateTime": _string_value(message.get("receivedDateTime")),
