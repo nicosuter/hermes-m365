@@ -84,7 +84,7 @@ def summarize_with_llm(
         except SummaryLlmError:
             raise
         except ValueError as e:
-            raise SummaryLlmError(f"Schema validation failed: {e}") from e
+            raise SummaryLlmError(f"SchemaValidationError: {e}") from e
         except Exception as e:
             raise SummaryLlmError(f"Email summarization failed: {e}") from e
 

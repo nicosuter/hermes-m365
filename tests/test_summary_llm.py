@@ -176,7 +176,7 @@ def test_value_error_raises():
             payload=_PAYLOAD,
         )
     assert exc.value.code == "SUMMARY_LLM_ERROR"
-    assert "Schema validation failed" in str(exc.value)
+    assert "SchemaValidationError" in str(exc.value)
 
 
 def test_generic_exception_raises():
