@@ -128,7 +128,7 @@ async def test_list_mail_orders_filters_and_respects_top(config: MailConfig):
     mock_token()
     first_url = (
         f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages"
-        "?$orderby=receivedDateTime+desc&$top=2&$filter=from/emailAddress/address+eq+'stranger%40example.com'"
+        "?$top=2&$filter=from%2FemailAddress%2Faddress%20eq%20'stranger%40example.com'"
     )
     first_route = respx.get(first_url).mock(
         return_value=httpx.Response(
@@ -173,7 +173,7 @@ async def test_list_mail_unread_only_adds_isRead_filter(config: MailConfig):
     mock_token()
     first_url = (
         f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages"
-        "?$orderby=receivedDateTime+desc&$top=25&$filter=isRead+eq+false"
+        "?$top=25&$filter=isRead%20eq%20false"
     )
     first_route = respx.get(first_url).mock(
         return_value=httpx.Response(
@@ -216,7 +216,7 @@ async def test_list_mail_unread_only_combines_with_from_filter(config: MailConfi
     mock_token()
     first_url = (
         f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages"
-        "?$orderby=receivedDateTime+desc&$top=5&$filter=isRead+eq+false+and+from/emailAddress/address+eq+'boss%40example.com'"
+        "?$top=5&$filter=isRead%20eq%20false%20and%20from%2FemailAddress%2Faddress%20eq%20'boss%40example.com'"
     )
     first_route = respx.get(first_url).mock(
         return_value=httpx.Response(
@@ -241,7 +241,7 @@ async def test_list_mail_multiple_structured_filters(config: MailConfig):
     mock_token()
     first_url = (
         f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages"
-        "?$orderby=receivedDateTime+desc&$top=10&$filter=isRead+eq+false+and+from/emailAddress/address+eq+'boss%40example.com'+and+contains(subject,+%27invoice%27)+and+receivedDateTime+gt+%272024-01-01T00%3A00%3A00Z%27+and+hasAttachments+eq+true"
+        "?$top=10&$filter=isRead%20eq%20false%20and%20from%2FemailAddress%2Faddress%20eq%20'boss%40example.com'%20and%20contains(subject,%20%27invoice%27)%20and%20receivedDateTime%20gt%20%272024-01-01T00%3A00%3A00Z%27%20and%20hasAttachments%20eq%20true"
     )
     first_route = respx.get(first_url).mock(
         return_value=httpx.Response(
@@ -270,7 +270,7 @@ async def test_list_mail_no_filters_omits_filter_param(config: MailConfig):
     mock_token()
     first_url = (
         f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages"
-        "?$orderby=receivedDateTime+desc&$top=25"
+        "?$orderby=receivedDateTime%20desc&$top=25"
     )
     first_route = respx.get(first_url).mock(
         return_value=httpx.Response(
@@ -286,6 +286,13 @@ async def test_list_mail_no_filters_omits_filter_param(config: MailConfig):
 
     assert first_route.called
     assert result == {"emails": []}
+
+
+@pytest.mark.asyncio
+async def test_list_mail_rejects_raw_filter_argument(config: MailConfig):
+    async with GraphClient(config) as client:
+        with pytest.raises(TypeError):
+            _ = list_mail(**{"config": config, "client": client, "filter": "newsletter"})
 
 
 @pytest.mark.asyncio
@@ -788,7 +795,7 @@ async def test_list_mail_truncates_client_side_when_api_returns_more(config: Mai
     ]
     expected_url = (
         f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages"
-        "?$orderby=receivedDateTime+desc&$top=2&$filter=isRead+eq+false"
+        "?$top=2&$filter=isRead%20eq%20false"
     )
     route = respx.get(expected_url).mock(
         return_value=httpx.Response(200, json={"value": messages})
@@ -935,9 +942,9 @@ async def test_get_summary_works_for_untrusted_sender(tmp_path, monkeypatch: pyt
         json_schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"], "additionalProperties": False},
     )
 
-    captured_payloads: list[dict] = []
+    captured_payloads: list[dict[str, object]] = []
 
-    def fake_summarize(*, ctx, system_prompt, json_schema, payload, model=None, provider=None):
+    async def fake_summarize(*, ctx, system_prompt, json_schema, payload, model=None, provider=None, timeout=None):
         captured_payloads.append(payload)
         assert isinstance(payload, dict)
         assert payload["email_id"] == "msg-untrusted-summary"
@@ -999,9 +1006,9 @@ async def test_get_summary_works_for_trusted_sender(tmp_path, monkeypatch: pytes
         json_schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"], "additionalProperties": False},
     )
 
-    captured_payloads: list[dict] = []
+    captured_payloads: list[dict[str, object]] = []
 
-    def fake_summarize(*, ctx, system_prompt, json_schema, payload, model=None, provider=None):
+    async def fake_summarize(*, ctx, system_prompt, json_schema, payload, model=None, provider=None, timeout=None):
         captured_payloads.append(payload)
         return {"status": "ok", "reason": None, "result": {"summary": "Quarterly results are positive."}}
 
@@ -1038,8 +1045,10 @@ async def test_get_summary_works_for_trusted_sender(tmp_path, monkeypatch: pytes
     assert payload["isAllowedInboundSender"] is True
     assert payload["hasAttachments"] is True
     # Body was sanitized (HTML stripped)
-    assert "Results look" in payload["body"]
-    assert "<b>" not in payload["body"]
+    body = payload["body"]
+    assert isinstance(body, str)
+    assert "Results look" in body
+    assert "<b>" not in body
 
     assert result == {"schemaName": "general", "emailId": _encode_email_id("msg-trusted-summary"), "summary": {"summary": "Quarterly results are positive."}}
 
@@ -1067,7 +1076,7 @@ async def test_get_summary_propagates_llm_error_code(tmp_path, monkeypatch: pyte
         json_schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"], "additionalProperties": False},
     )
 
-    def fake_refusal(*, ctx, system_prompt, json_schema, payload, model=None, provider=None):
+    def fake_refusal(*, ctx, system_prompt, json_schema, payload, model=None, provider=None, timeout=None):
         raise sl_mod.SummaryLlmError("Model refused to generate summary", code="SUMMARY_REFUSED")
 
     mock_token()
@@ -1251,7 +1260,7 @@ async def test_get_summary_uses_normalize_summary_response(tmp_path, monkeypatch
         json_schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"], "additionalProperties": False},
     )
 
-    def fake_summarize(*, ctx, system_prompt, json_schema, payload, model=None, provider=None):
+    async def fake_summarize(*, ctx, system_prompt, json_schema, payload, model=None, provider=None, timeout=None):
         return {"status": "wrong_type", "reason": "Calendar event, not email.", "result": None}
 
     mock_token()

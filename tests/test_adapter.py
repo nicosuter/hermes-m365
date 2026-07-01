@@ -32,7 +32,7 @@ def _mail_url(path: str) -> str:
 
 def _make_message(msg_id: str, sender: str, name: str = "", subject: str = "Test",
                   body: str = "Hello", received: str = "2026-06-17T12:00:00Z",
-                  conversation_id: str = "conv-1", internet_message_id: str = "<msg@example.com>") -> dict:
+                  conversation_id: str = "conv-1", internet_message_id: str = "<msg@example.com>") -> dict[str, object]:
     return {
         "id": msg_id,
         "subject": subject,
@@ -131,6 +131,19 @@ async def test_send_returns_false_when_not_connected(env, state_path):
     assert result.success is False
 
 
+@pytest.mark.asyncio
+async def test_list_mail_wrapper_rejects_free_form_filter(env):
+    _ = env
+    from adapter import list_mail_wrapper
+
+    result = await list_mail_wrapper(filter="newsletter")
+
+    assert result["error"] == "UNSUPPORTED_FREE_FORM_FILTER"
+    message = result["message"]
+    assert isinstance(message, str)
+    assert "subjectContains" in message
+
+
 # ── get_chat_info Tests ───────────────────────────────────────────────────
 
 def test_get_chat_info_with_email_prefix():
@@ -164,8 +177,8 @@ async def test_polling_does_not_mark_mail_read(env, state_path):
     from adapter import M365EmailAdapter
 
     adapter = M365EmailAdapter()
-    tracker_calls: list[dict] = []
-    async def tracker(event: dict) -> None:
+    tracker_calls: list[dict[str, object]] = []
+    async def tracker(event: dict[str, object]) -> None:
         tracker_calls.append(event)
     adapter.handle_message = tracker  # type: ignore[method-assign]
 
@@ -203,8 +216,8 @@ async def test_watermark_does_not_skip_newer_messages_in_same_poll(env, state_pa
     from adapter import M365EmailAdapter
 
     adapter = M365EmailAdapter()
-    tracker_calls: list[dict] = []
-    async def tracker(event: dict) -> None:
+    tracker_calls: list[dict[str, object]] = []
+    async def tracker(event: dict[str, object]) -> None:
         tracker_calls.append(event)
     adapter.handle_message = tracker  # type: ignore[method-assign]
 
@@ -465,8 +478,8 @@ async def test_polling_respects_poll_top_client_side(env, state_path):
     from adapter import M365EmailAdapter
 
     adapter = M365EmailAdapter()
-    tracker_calls: list[dict] = []
-    async def tracker(event: dict) -> None:
+    tracker_calls: list[dict[str, object]] = []
+    async def tracker(event: dict[str, object]) -> None:
         tracker_calls.append(event)
     adapter.handle_message = tracker  # type: ignore[method-assign]
 

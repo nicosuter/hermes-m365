@@ -46,6 +46,7 @@ class MailConfig:
     request_timeout: float = DEFAULT_REQUEST_TIMEOUT
     summary_model: str | None = None
     summary_provider: str | None = None
+    summary_timeout: float = 120.0
 
     @classmethod
     def from_env(cls, *, load_dotenv: bool = True, project_root: Path | None = None) -> "MailConfig":
@@ -83,6 +84,11 @@ class MailConfig:
             ),
             summary_model=_env_or_none(env, "M365_SUMMARY_MODEL"),
             summary_provider=_env_or_none(env, "M365_SUMMARY_PROVIDER"),
+            summary_timeout=parse_positive_float(
+                env,
+                "M365_SUMMARY_TIMEOUT",
+                120.0,
+            ),
         )
 
 
@@ -100,6 +106,15 @@ def get_summary_provider(config: MailConfig) -> str | None:
     When None, Hermes ctx.llm will use its default provider.
     """
     return config.summary_provider
+
+
+def get_summary_timeout(config: MailConfig) -> float:
+    """Return the configured summary LLM timeout in seconds.
+
+    Defaults to 120s. The Hermes auxiliary_client default is 30s which is
+    too short for email summarization of large bodies.
+    """
+    return config.summary_timeout
 
 
 def project_root_from_module() -> Path:

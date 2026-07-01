@@ -40,7 +40,7 @@ platforms:
 
 ## Tool Contracts
 
-- `list_mail(top=25, filter=None, unreadOnly=False)`: List recent emails from the inbox. Returns all senders (subject to inbound drop logic). `unreadOnly` filters to unread messages only.
+- `list_mail(top=25, unreadOnly=True, from=None, subjectContains=None, dateAfter=None, dateBefore=None, hasAttachments=None)`: List recent emails from the inbox. Returns all senders (subject to inbound drop logic). Filtering is structured only; raw OData/free-form `filter` strings are not accepted.
 - `get_email(email_id)`: Retrieve email content. Returns sanitized text and attachment metadata.
 - `get_attachment(email_id, attachment_id)`: Download an attachment.
 - `get_summary(email_id, schema_name="general")`: AI-generated summary of an email using a fixed schema from the project `schema/` directory. Available for ALL emails, including those from non-whitelisted senders whose body access is blocked by `get_email`. Current schemas: `general`, `newsletter`.

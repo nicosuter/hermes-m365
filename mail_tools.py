@@ -7,7 +7,7 @@ import logging
 import re
 from pathlib import Path
 from typing import cast
-from urllib.parse import quote, quote_plus
+from urllib.parse import quote
 
 
 def _encode_email_id(raw_id: str) -> str:
@@ -21,7 +21,14 @@ def _decode_email_id(encoded_id: str) -> str:
     return base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
 
 from attachments import build_saved_path, check_attachment_sender, enforce_attachment_size, sanitize_filename
-from config import MailConfig, MailConfigError, get_summary_model, get_summary_provider, is_allowed_sender
+from config import (
+    MailConfig,
+    MailConfigError,
+    get_summary_model,
+    get_summary_provider,
+    get_summary_timeout,
+    is_allowed_sender,
+)
 from graph import GraphClient
 from summary_llm import SummaryLlmError, summarize_with_llm
 from summary_schema import SummarySchemaError, build_internal_response_schema, load_summary_schema
@@ -98,10 +105,6 @@ async def list_mail(
     has_attachments: bool | None = None,
 ) -> dict[str, object]:
     _ = config
-    query_parts = [
-        f"$orderby={quote_plus('receivedDateTime desc')}",
-        f"$top={int(top)}",
-    ]
     odata_filter = _build_odata_filter(
         unreadOnly=unreadOnly,
         from_address=from_address,
@@ -110,8 +113,14 @@ async def list_mail(
         date_before=date_before,
         has_attachments=has_attachments,
     )
+    # Microsoft Graph rejects combining $orderby with $filter that uses contains()/startswith().
+    # When a filter is present, skip $orderby — Graph returns results in receivedDateTime order
+    # by default anyway.
+    query_parts = [f"$top={int(top)}"]
     if odata_filter:
-        query_parts.append(f"$filter={quote_plus(odata_filter)}")
+        query_parts.append(f"$filter={quote(odata_filter, safe='')}")
+    else:
+        query_parts.append("$orderby=receivedDateTime%20desc")
 
     url = client.mail_url(f"mailFolders/inbox/messages?{'&'.join(query_parts)}")
     response = await client.get(url)
@@ -461,13 +470,14 @@ async def get_summary(
         schema_name, model, provider, email_id,
     )
     try:
-        result = summarize_with_llm(
+        result = await summarize_with_llm(
             ctx=ctx,
             system_prompt=spec.system_prompt,
             json_schema=internal_schema,
             payload=payload,
             model=model,
             provider=provider,
+            timeout=get_summary_timeout(config),
         )
     except SummaryLlmError as exc:
         logger.warning("get_summary: SummaryLlmError: %s", exc)

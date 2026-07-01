@@ -94,7 +94,7 @@ class M365EmailAdapter(BasePlatformAdapter):
 
     # -- Hermes lifecycle hooks ------------------------------------------------
 
-    async def connect(self) -> bool:
+    async def connect(self, **kwargs) -> bool:
         """Mark connected, initialize GraphClient, start polling task."""
         if self.is_connected:
             return True
@@ -544,7 +544,12 @@ async def _tool_call(func: Callable[..., Any], **kwargs: Any) -> Any:
 async def list_mail_wrapper(args: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, object]:
     from mail_tools import list_mail
 
-    _args = args or {}
+    _args = {**(args or {}), **kwargs}
+    if "filter" in _args:
+        return {
+            "error": "UNSUPPORTED_FREE_FORM_FILTER",
+            "message": "list_mail does not accept raw OData filter strings. Use structured filters: from, subjectContains, dateAfter, dateBefore, hasAttachments, and unreadOnly.",
+        }
     unread_only_val = _args.get("unreadOnly", _args.get("unread_only", True))
     return await _tool_call(
         list_mail,

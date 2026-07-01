@@ -19,14 +19,17 @@ class FakeContext:
     def __init__(self) -> None:
         self.platform_kwargs: dict[str, object] | None = None
         self.tools: list[tuple[str, object, str]] = []
+        self.tool_schemas: dict[str, dict[str, object]] = {}
         self.tool_kwargs: dict[str, dict[str, object]] = {}
         self._tool_call_kwargs: dict[str, bool] = {}  # tracks if handler= was used as keyword
 
     def register_platform(self, **kwargs: object) -> None:
         self.platform_kwargs = kwargs
 
-    def register_tool(self, *, name: str, toolset: str, schema: dict, handler: Callable, **kwargs: object) -> None:
-        self.tools.append((name, handler, schema.get("description", "")))
+    def register_tool(self, *, name: str, toolset: str, schema: dict[str, object], handler: Callable[..., object], **kwargs: object) -> None:
+        description = schema.get("description", "")
+        self.tools.append((name, handler, description if isinstance(description, str) else ""))
+        self.tool_schemas[name] = schema
         self.tool_kwargs[name] = {"has_handler_kw": True, **kwargs}
 
 
@@ -116,6 +119,27 @@ class TestAdapterRegistration:
             desc for name, _, desc in ctx.tools if name == "get_summary"
         )
         assert "schema" in get_summary_desc.lower()
+
+    def test_list_mail_schema_exposes_only_structured_filters(self) -> None:
+        from adapter import register
+
+        ctx = FakeContext()
+        register(ctx)
+
+        parameters = ctx.tool_schemas["list_mail"]["parameters"]
+        assert isinstance(parameters, dict)
+        properties = parameters["properties"]
+        assert isinstance(properties, dict)
+        assert "filter" not in properties
+        assert set(properties) == {
+            "unreadOnly",
+            "top",
+            "from",
+            "subjectContains",
+            "dateAfter",
+            "dateBefore",
+            "hasAttachments",
+        }
 
 
 class TestPluginYamlSummary:

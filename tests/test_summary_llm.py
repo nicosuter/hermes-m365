@@ -48,12 +48,12 @@ def test_error_default_code():
 # Success cases
 # ---------------------------------------------------------------------------
 
-def test_success_with_parsed_result():
-    """ctx.llm.complete_structured returns parsed result."""
+async def test_success_with_parsed_result():
+    """ctx.llm.acomplete_structured returns parsed result."""
     mock_ctx = _FakeCtx()
     mock_ctx._result = _FakeStructuredResult(parsed={"status": "ok", "reason": None, "result": {"topic": "Q3"}})
 
-    result = summarize_with_llm(
+    result = await summarize_with_llm(
         ctx=mock_ctx,
         system_prompt="You are an email summarizer.",
         json_schema=_internal_schema(),
@@ -63,12 +63,12 @@ def test_success_with_parsed_result():
     assert result["data"]["result"]["topic"] == "Q3"
 
 
-def test_success_with_text_fallback():
+async def test_success_with_text_fallback():
     """When parsed is None but text is valid JSON, parse it."""
     mock_ctx = _FakeCtx()
     mock_ctx._result = _FakeStructuredResult(parsed=None, text='{"status": "ok", "result": {"topic": "Q3"}}')
 
-    result = summarize_with_llm(
+    result = await summarize_with_llm(
         ctx=mock_ctx,
         system_prompt="You are an email summarizer.",
         json_schema=_internal_schema(),
@@ -78,12 +78,12 @@ def test_success_with_text_fallback():
     assert result["data"]["result"]["topic"] == "Q3"
 
 
-def test_success_with_model_override():
-    """Model param is passed through to ctx.llm.complete_structured()."""
+async def test_success_with_model_override():
+    """Model param is passed through to ctx.llm.acomplete_structured()."""
     mock_ctx = _FakeCtx()
     mock_ctx._result = _FakeStructuredResult(parsed={"status": "ok", "reason": None, "result": {"topic": "test"}})
 
-    result = summarize_with_llm(
+    result = await summarize_with_llm(
         ctx=mock_ctx,
         system_prompt="Summarize.",
         json_schema=_internal_schema(),
@@ -94,12 +94,12 @@ def test_success_with_model_override():
     assert mock_ctx._last_model == "gpt-4o-mini"
 
 
-def test_success_without_model():
+async def test_success_without_model():
     """When model is None, it is not passed to ctx.llm."""
     mock_ctx = _FakeCtx()
     mock_ctx._result = _FakeStructuredResult(parsed={"status": "ok", "reason": None, "result": {"topic": "test"}})
 
-    result = summarize_with_llm(
+    result = await summarize_with_llm(
         ctx=mock_ctx,
         system_prompt="Summarize.",
         json_schema=_internal_schema(),
@@ -109,12 +109,12 @@ def test_success_without_model():
     assert mock_ctx._last_model is None
 
 
-def test_success_with_provider_override():
-    """Provider param is passed through to ctx.llm.complete_structured()."""
+async def test_success_with_provider_override():
+    """Provider param is passed through to ctx.llm.acomplete_structured()."""
     mock_ctx = _FakeCtx()
     mock_ctx._result = _FakeStructuredResult(parsed={"status": "ok", "reason": None, "result": {"topic": "test"}})
 
-    result = summarize_with_llm(
+    result = await summarize_with_llm(
         ctx=mock_ctx,
         system_prompt="Summarize.",
         json_schema=_internal_schema(),
@@ -125,12 +125,12 @@ def test_success_with_provider_override():
     assert mock_ctx._last_provider == "openai"
 
 
-def test_success_without_provider():
+async def test_success_without_provider():
     """When provider is None, it is not passed to ctx.llm."""
     mock_ctx = _FakeCtx()
     mock_ctx._result = _FakeStructuredResult(parsed={"status": "ok", "reason": None, "result": {"topic": "test"}})
 
-    result = summarize_with_llm(
+    result = await summarize_with_llm(
         ctx=mock_ctx,
         system_prompt="Summarize.",
         json_schema=_internal_schema(),
@@ -144,16 +144,12 @@ def test_success_without_provider():
 # Error cases
 # ---------------------------------------------------------------------------
 
-def test_empty_response_raises():
-    """Empty response (no parsed, no text) raises SummaryLlmError after fallback."""
+async def test_empty_response_raises():
     mock_ctx = _FakeCtx()
-    mock_ctx._result = [
-        _FakeStructuredResult(parsed=None, text=None),
-        _FakeStructuredResult(parsed=None, text=None),
-    ]
+    mock_ctx._result = _FakeStructuredResult(parsed=None, text=None)
 
     with pytest.raises(SummaryLlmError) as exc:
-        summarize_with_llm(
+        await summarize_with_llm(
             ctx=mock_ctx,
             system_prompt="Summarize.",
             json_schema=_internal_schema(),
@@ -161,15 +157,32 @@ def test_empty_response_raises():
         )
     assert exc.value.code == "SUMMARY_LLM_ERROR"
     assert "non-JSON" in str(exc.value)
+    assert mock_ctx.llm._call_count == 1
 
 
-def test_value_error_raises():
+async def test_invalid_text_response_raises_without_fallback():
+    mock_ctx = _FakeCtx()
+    mock_ctx._result = _FakeStructuredResult(parsed=None, text="not json")
+
+    with pytest.raises(SummaryLlmError) as exc:
+        await summarize_with_llm(
+            ctx=mock_ctx,
+            system_prompt="Summarize.",
+            json_schema=_internal_schema(),
+            payload=_PAYLOAD,
+        )
+    assert exc.value.code == "SUMMARY_LLM_ERROR"
+    assert "non-JSON" in str(exc.value)
+    assert mock_ctx.llm._call_count == 1
+
+
+async def test_value_error_raises():
     """ValueError from ctx.llm raises SummaryLlmError."""
     mock_ctx = _FakeCtx()
     mock_ctx._exc = ValueError("schema validation failed")
 
     with pytest.raises(SummaryLlmError) as exc:
-        summarize_with_llm(
+        await summarize_with_llm(
             ctx=mock_ctx,
             system_prompt="Summarize.",
             json_schema=_internal_schema(),
@@ -179,13 +192,13 @@ def test_value_error_raises():
     assert "SchemaValidationError" in str(exc.value)
 
 
-def test_generic_exception_raises():
+async def test_generic_exception_raises():
     """Generic exception from ctx.llm raises SummaryLlmError."""
     mock_ctx = _FakeCtx()
     mock_ctx._exc = ConnectionError("connection refused")
 
     with pytest.raises(SummaryLlmError) as exc:
-        summarize_with_llm(
+        await summarize_with_llm(
             ctx=mock_ctx,
             system_prompt="Summarize.",
             json_schema=_internal_schema(),
@@ -195,13 +208,13 @@ def test_generic_exception_raises():
     assert "Email summarization failed" in str(exc.value)
 
 
-def test_timeout_raises():
+async def test_timeout_raises():
     """TimeoutError from ctx.llm raises SummaryLlmError."""
     mock_ctx = _FakeCtx()
     mock_ctx._exc = TimeoutError("timed out")
 
     with pytest.raises(SummaryLlmError) as exc:
-        summarize_with_llm(
+        await summarize_with_llm(
             ctx=mock_ctx,
             system_prompt="Summarize.",
             json_schema=_internal_schema(),
@@ -210,12 +223,12 @@ def test_timeout_raises():
     assert exc.value.code == "SUMMARY_LLM_ERROR"
 
 
-def test_instructions_and_payload_passed():
+async def test_instructions_and_payload_passed():
     """Instructions and payload are correctly formatted."""
     mock_ctx = _FakeCtx()
     mock_ctx._result = _FakeStructuredResult(parsed={"status": "ok", "reason": None, "result": {"topic": "test"}})
 
-    summarize_with_llm(
+    await summarize_with_llm(
         ctx=mock_ctx,
         system_prompt="You are a summarizer.",
         json_schema=_internal_schema(),
@@ -231,13 +244,13 @@ def test_instructions_and_payload_passed():
     assert mock_ctx._last_purpose == "email.summarize"
 
 
-def test_trusted_sender_uses_trusted_prompt():
+async def test_trusted_sender_uses_trusted_prompt():
     """Trusted senders get _TRUSTED_PROMPT instead of schema prompt."""
     mock_ctx = _FakeCtx()
     mock_ctx._result = _FakeStructuredResult(parsed={"status": "ok", "reason": None, "result": {"topic": "test"}})
 
     payload = {**_PAYLOAD, "isAllowedInboundSender": True}
-    summarize_with_llm(
+    await summarize_with_llm(
         ctx=mock_ctx,
         system_prompt="You are a data extraction parser.",
         json_schema=_internal_schema(),
@@ -247,13 +260,13 @@ def test_trusted_sender_uses_trusted_prompt():
     assert mock_ctx._last_system_prompt == _TRUSTED_PROMPT
 
 
-def test_untrusted_sender_uses_schema_prompt():
+async def test_untrusted_sender_uses_schema_prompt():
     """Untrusted senders get the schema system prompt (anti-injection language)."""
     mock_ctx = _FakeCtx()
     mock_ctx._result = _FakeStructuredResult(parsed={"status": "ok", "reason": None, "result": {"topic": "test"}})
 
     payload = {**_PAYLOAD, "isAllowedInboundSender": False}
-    summarize_with_llm(
+    await summarize_with_llm(
         ctx=mock_ctx,
         system_prompt="You are a data extraction parser.",
         json_schema=_internal_schema(),
@@ -279,7 +292,7 @@ class _FakeLlm:
         self._ctx = ctx
         self._call_count = 0
 
-    def complete_structured(
+    async def acomplete_structured(
         self,
         instructions: str,
         input: Any,

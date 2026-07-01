@@ -1,4 +1,4 @@
-"""Summarize M365 emails using Hermes ctx.llm.complete_structured()."""
+"""Summarize M365 emails using Hermes ctx.llm.acomplete_structured()."""
 
 from __future__ import annotations
 
@@ -22,23 +22,32 @@ class SummaryLlmError(Exception):
         self.code = code
 
 
-def summarize_with_llm(
+async def summarize_with_llm(
     ctx,
     system_prompt: str,
     json_schema: dict,
     payload: dict,
     model: str | None = None,
     provider: str | None = None,
+    timeout: float | None = None,
 ) -> dict:
-    """Summarize an email using Hermes ctx.llm.complete_structured().
+    """Summarize an email using Hermes ctx.llm.acomplete_structured().
+
+    Uses the async variant (acomplete_structured) to avoid blocking the event
+    loop — this function is called from async tool handlers (get_summary).
+    The sync complete_structured uses a blocking HTTP client that can corrupt
+    the async httpx connection pool, causing spurious ConnectionError.
 
     Args:
-        ctx: Plugin context with ctx.llm.complete_structured().
+        ctx: Plugin context with ctx.llm.acomplete_structured().
         system_prompt: System prompt from schema spec.
         json_schema: Internal response JSON schema.
         payload: Email data (subject, sender, recipients, body, has_attachments).
         model: Optional model override. When None, Hermes uses its default model.
         provider: Optional provider override. When None, Hermes uses its default provider.
+        timeout: Timeout in seconds for the LLM call. Defaults to 120s.
+            The Hermes auxiliary_client default is 30s, which is too short
+            for email summarization of large bodies.
 
     Returns:
         Dict with 'status' and 'data' keys.
@@ -51,6 +60,8 @@ def summarize_with_llm(
         call_kwargs["model"] = model
     if provider:
         call_kwargs["provider"] = provider
+    if timeout is not None:
+        call_kwargs["timeout"] = timeout
 
     def _try_parse(text: str) -> dict | None:
         try:
@@ -59,8 +70,8 @@ def summarize_with_llm(
         except (json.JSONDecodeError, ValueError):
             return None
 
-    def _make_call(schema: dict | None, use_json_mode: bool) -> dict:
-        result = ctx.llm.complete_structured(
+    async def _make_call(schema: dict | None, use_json_mode: bool) -> dict:
+        result = await ctx.llm.acomplete_structured(
             instructions="Extract the content into the provided schema. Return your response as a JSON object matching the schema exactly.",
             input=[{"type": "text", "text": payload_json}],
             json_schema=schema,
@@ -78,9 +89,9 @@ def summarize_with_llm(
                 return {"status": "success", "data": parsed_text}
         return {"status": "fail", "data": None}
 
-    def _wrap_call(schema: dict | None, use_json_mode: bool) -> dict:
+    async def _wrap_call(schema: dict | None, use_json_mode: bool) -> dict:
         try:
-            return _make_call(schema, use_json_mode)
+            return await _make_call(schema, use_json_mode)
         except SummaryLlmError:
             raise
         except ValueError as e:
@@ -88,18 +99,11 @@ def summarize_with_llm(
         except Exception as e:
             raise SummaryLlmError(f"Email summarization failed: {e}") from e
 
-    result = _wrap_call(json_schema, False)
-    if result["status"] == "success":
-        return result
-
-    logger.warning(
-        "json_schema response format failed (model may not support it), falling back to json_mode"
-    )
-    result = _wrap_call(None, True)
+    result = await _wrap_call(json_schema, False)
     if result["status"] == "success":
         return result
 
     raise SummaryLlmError(
-        "LLM returned non-JSON response even with json_mode fallback. "
+        "LLM returned non-JSON response for structured output. "
         "Model may not support structured output."
     )
