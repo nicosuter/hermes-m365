@@ -94,9 +94,33 @@ class TestAdapterRegistration:
 
         ctx = FakeContext()
         register(ctx)
-        # The registered handler must be the actual wrapper, registered as async.
-        assert ctx.tool_handlers.get("get_summary") is get_summary_wrapper
+        # The registered handler is the JSON-serializing wrapper around the
+        # actual wrapper (Hermes' contract requires a str result). __wrapped__
+        # (set by functools.wraps) must point at the real handler.
+        registered = ctx.tool_handlers.get("get_summary")
+        assert getattr(registered, "__wrapped__", None) is get_summary_wrapper
         assert ctx.tool_kwargs.get("get_summary", {}).get("is_async") is True
+
+    def test_registered_handlers_return_json_string_not_dict(self) -> None:
+        """Regression: Hermes' tool_result_contract rejects dict results, so every
+        registered handler must return a JSON string (or the multimodal envelope).
+        """
+        import asyncio
+        import json
+
+        from adapter import register
+
+        ctx = FakeContext()
+        register(ctx)
+
+        # list_mail with a free-form filter short-circuits to an error envelope
+        # without any env/network access — ideal for exercising the boundary.
+        handler = ctx.tool_handlers["list_mail"]
+        result = asyncio.run(handler({"filter": "newsletter"}))
+
+        assert isinstance(result, str), "handler must return a str, not a dict"
+        parsed = json.loads(result)
+        assert parsed["error"] == "UNSUPPORTED_FREE_FORM_FILTER"
 
     def test_get_email_description_mentions_summary(self) -> None:
         from adapter import register

@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import asyncio
+import functools
+import json
 import logging
 import os
 import secrets
@@ -13,7 +15,7 @@ from typing import Any, Callable
 
 import httpx
 
-from config import MailConfig, MailConfigError, is_allowed_sender, REQUIRED_ENV_VARS
+from config import MailConfig, MailConfigError, is_allowed_sender
 from graph import GraphClient
 from mail_tools import forward_email, reply_all, reply_email, send_email
 from state import PollState
@@ -541,6 +543,26 @@ async def _tool_call(func: Callable[..., Any], **kwargs: Any) -> Any:
         return await func(config=config, client=client, **kwargs)
 
 
+def _json_result(handler: Callable[..., Any]) -> Callable[..., Any]:
+    """Serialize an async tool handler's dict result into a JSON string.
+
+    Hermes' tool-result contract (``tools.registry._normalize_handler_result``)
+    accepts only a ``str`` or the multimodal envelope; a raw ``dict`` is rejected
+    with ``error_type="tool_result_contract"`` ("unsupported result type: dict").
+    Our handlers build structured dicts, so we serialize at the registration
+    boundary and leave the handlers (and their unit tests) returning dicts.
+    """
+
+    @functools.wraps(handler)
+    async def _wrapped(args: dict[str, Any] | None = None, **kwargs: Any) -> Any:
+        result = await handler(args, **kwargs)
+        if isinstance(result, str):
+            return result
+        return json.dumps(result, ensure_ascii=False, default=str)
+
+    return _wrapped
+
+
 async def list_mail_wrapper(args: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, object]:
     from mail_tools import list_mail
 
@@ -769,7 +791,7 @@ def register(ctx):
                 "required": [],
             },
         },
-        handler=list_mail_wrapper,
+        handler=_json_result(list_mail_wrapper),
         is_async=True,
     )
     ctx.register_tool(
@@ -786,7 +808,7 @@ def register(ctx):
                 "required": ["email_id"],
             },
         },
-        handler=get_email_wrapper,
+        handler=_json_result(get_email_wrapper),
         is_async=True,
     )
     ctx.register_tool(
@@ -804,7 +826,7 @@ def register(ctx):
                 "required": ["email_id"],
             },
         },
-        handler=get_summary_wrapper,
+        handler=_json_result(get_summary_wrapper),
         is_async=True,
     )
     ctx.register_tool(
@@ -822,7 +844,7 @@ def register(ctx):
                 "required": ["email_ids"],
             },
         },
-        handler=get_summary_batch_wrapper,
+        handler=_json_result(get_summary_batch_wrapper),
         is_async=True,
     )
     ctx.register_tool(
@@ -840,7 +862,7 @@ def register(ctx):
                 "required": ["email_id", "attachment_id"],
             },
         },
-        handler=get_attachment_wrapper,
+        handler=_json_result(get_attachment_wrapper),
         is_async=True,
     )
     ctx.register_tool(
@@ -861,7 +883,7 @@ def register(ctx):
                 "required": ["to", "subject", "body"],
             },
         },
-        handler=send_email_wrapper,
+        handler=_json_result(send_email_wrapper),
         is_async=True,
     )
     ctx.register_tool(
@@ -880,7 +902,7 @@ def register(ctx):
                 "required": ["email_id", "body"],
             },
         },
-        handler=reply_email_wrapper,
+        handler=_json_result(reply_email_wrapper),
         is_async=True,
     )
     ctx.register_tool(
@@ -899,7 +921,7 @@ def register(ctx):
                 "required": ["email_id", "body"],
             },
         },
-        handler=reply_all_wrapper,
+        handler=_json_result(reply_all_wrapper),
         is_async=True,
     )
     ctx.register_tool(
@@ -919,7 +941,7 @@ def register(ctx):
                 "required": ["email_id", "to", "body"],
             },
         },
-        handler=forward_email_wrapper,
+        handler=_json_result(forward_email_wrapper),
         is_async=True,
     )
     ctx.register_tool(
@@ -936,7 +958,7 @@ def register(ctx):
                 "required": ["email_id"],
             },
         },
-        handler=mark_read_wrapper,
+        handler=_json_result(mark_read_wrapper),
         is_async=True,
     )
     ctx.register_tool(
@@ -953,7 +975,7 @@ def register(ctx):
                 "required": ["email_id"],
             },
         },
-        handler=mark_unread_wrapper,
+        handler=_json_result(mark_unread_wrapper),
         is_async=True,
     )
     if not _is_confirmation_disabled():
@@ -971,7 +993,7 @@ def register(ctx):
                     "required": ["confirmation_token"],
                 },
             },
-            handler=confirm_send_email_wrapper,
+            handler=_json_result(confirm_send_email_wrapper),
             is_async=True,
         )
         ctx.register_tool(
@@ -988,7 +1010,7 @@ def register(ctx):
                     "required": ["confirmation_token"],
                 },
             },
-            handler=confirm_reply_email_wrapper,
+            handler=_json_result(confirm_reply_email_wrapper),
             is_async=True,
         )
         ctx.register_tool(
@@ -1005,7 +1027,7 @@ def register(ctx):
                     "required": ["confirmation_token"],
                 },
             },
-            handler=confirm_reply_all_wrapper,
+            handler=_json_result(confirm_reply_all_wrapper),
             is_async=True,
         )
         ctx.register_tool(
@@ -1022,6 +1044,6 @@ def register(ctx):
                     "required": ["confirmation_token"],
                 },
             },
-            handler=confirm_forward_email_wrapper,
+            handler=_json_result(confirm_forward_email_wrapper),
             is_async=True,
         )
