@@ -24,6 +24,8 @@ from attachments import build_saved_path, check_attachment_sender, enforce_attac
 from config import (
     MailConfig,
     MailConfigError,
+    get_summary_batch_concurrency,
+    get_summary_batch_max_size,
     get_summary_model,
     get_summary_provider,
     get_summary_timeout,
@@ -118,7 +120,7 @@ async def list_mail(
     # by default anyway.
     query_parts = [f"$top={int(top)}"]
     if odata_filter:
-        query_parts.append(f"$filter={quote(odata_filter, safe='')}")
+        query_parts.append("$filter=" + quote(odata_filter, safe="':()=&<>+-_"))
     else:
         query_parts.append("$orderby=receivedDateTime%20desc")
 
@@ -487,6 +489,96 @@ async def get_summary(
     normalized = normalize_summary_response(schema_name, email_id, result)
     logger.debug("get_summary: normalized response error=%s", normalized.get("error", "none"))
     return normalized
+
+
+async def get_summaries_batch(
+    *,
+    ctx,
+    config: MailConfig,
+    client: GraphClient,
+    email_ids: list[str],
+    schema_name: str = "general",
+) -> dict[str, object]:
+    """Batch summarize multiple emails with concurrency control.
+
+    Validates list size against M365_SUMMARY_BATCH_MAX_SIZE and limits
+    concurrent LLM calls via M365_SUMMARY_BATCH_CONCURRENCY.
+    """
+    import asyncio
+
+    max_size = get_summary_batch_max_size(config)
+    if not email_ids:
+        return {"summaries": [], "total": 0, "success": 0, "failed": 0}
+
+    if len(email_ids) > max_size:
+        return {
+            "error": "BATCH_TOO_LARGE",
+            "message": f"Batch summary limited to {max_size} emails. "
+                       f"Requested {len(email_ids)}. Set M365_SUMMARY_BATCH_MAX_SIZE to increase.",
+            "maxSize": max_size,
+            "requested": len(email_ids),
+        }
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique_ids: list[str] = []
+    for eid in email_ids:
+        if eid not in seen:
+            seen.add(eid)
+            unique_ids.append(eid)
+
+    concurrency = get_summary_batch_concurrency(config)
+    semaphore = asyncio.Semaphore(concurrency)
+    results: list[dict[str, object] | None] = [None] * len(unique_ids)
+
+    async def _summarize_one(index: int, eid: str) -> None:
+        async with semaphore:
+            results[index] = await get_summary(
+                ctx=ctx,
+                config=config,
+                client=client,
+                email_id=eid,
+                schema_name=schema_name,
+            )
+
+    tasks = [asyncio.create_task(_summarize_one(i, eid)) for i, eid in enumerate(unique_ids)]
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+    summaries: list[dict[str, object]] = []
+    success = 0
+    failed = 0
+    for i, eid in enumerate(unique_ids):
+        result = results[i]
+        if result is None:
+            summaries.append({
+                "emailId": eid,
+                "error": "SUMMARY_EXCEPTION",
+                "message": "Summary result was unexpectedly None.",
+            })
+            failed += 1
+        elif isinstance(result, BaseException):
+            summaries.append({
+                "emailId": eid,
+                "error": "SUMMARY_EXCEPTION",
+                "message": f"Unexpected error summarizing email: {result}",
+            })
+            failed += 1
+        else:
+            entry: dict[str, object] = {"emailId": eid}
+            entry.update(result)
+            summaries.append(entry)
+            if "error" not in result:
+                success += 1
+            else:
+                failed += 1
+
+    return {
+        "summaries": summaries,
+        "total": len(unique_ids),
+        "success": success,
+        "failed": failed,
+        "schemaName": schema_name,
+    }
 
 
 async def _get_message_metadata(client: GraphClient, email_id: str) -> dict[str, object]:

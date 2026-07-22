@@ -7,6 +7,7 @@ provides_tools:
   - list_mail
   - get_email
   - get_summary
+  - get_summary_batch
   - get_attachment
   - send_email
   - reply_email
@@ -31,3 +32,5 @@ optional_env:
   - DISABLE_SEND_CONFIRM
   - M365_SUMMARY_MODEL
   - M365_SUMMARY_PROVIDER
+  - M365_SUMMARY_BATCH_MAX_SIZE
+  - M365_SUMMARY_BATCH_CONCURRENCY

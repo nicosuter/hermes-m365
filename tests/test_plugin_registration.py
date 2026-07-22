@@ -75,14 +75,14 @@ class TestAdapterRegistration:
         assert ctx.platform_kwargs is not None
         assert ctx.platform_kwargs["name"] == "m365_email"
 
-    def test_registers_all_fourteen_tools(self) -> None:
+    def test_registers_all_fifteen_tools(self) -> None:
         from adapter import register
 
         ctx = FakeContext()
         register(ctx)
         tool_names = {name for name, _, _ in ctx.tools}
         expected = {
-            "list_mail", "get_email", "get_summary", "get_attachment", "send_email",
+            "list_mail", "get_email", "get_summary", "get_summary_batch", "get_attachment", "send_email",
             "reply_email", "reply_all", "forward_email",
             "mark_read", "mark_unread",
             "confirm_send_email", "confirm_reply_email", "confirm_reply_all", "confirm_forward_email",

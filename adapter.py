@@ -585,6 +585,25 @@ async def get_summary_wrapper(args: dict[str, Any] | None = None, **kwargs: Any)
         )
 
 
+async def get_summary_batch_wrapper(args: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, object]:
+    from mail_tools import get_summaries_batch
+
+    _args = {**(args or {}), **kwargs}
+    config = MailConfig.from_env()
+    raw_ids = _args.get("email_ids", [])
+    if not isinstance(raw_ids, list):
+        return {"error": "INVALID_INPUT", "message": "email_ids must be a list of strings."}
+    email_ids = [str(x) for x in raw_ids]
+    async with GraphClient(config) as client:
+        return await get_summaries_batch(
+            ctx=_plugin_ctx,
+            config=config,
+            client=client,
+            email_ids=email_ids,
+            schema_name=str(_args.get("schema_name", "general")),
+        )
+
+
 async def get_attachment_wrapper(args: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, object]:
     from mail_tools import get_attachment
 
@@ -786,6 +805,24 @@ def register(ctx):
             },
         },
         handler=get_summary_wrapper,
+        is_async=True,
+    )
+    ctx.register_tool(
+        name="get_summary_batch",
+        toolset="m365_email",
+        schema={
+            "name": "get_summary_batch",
+            "description": "Batch summarize multiple emails in parallel. Returns a list of summaries with success/failure counts. Concurrency controlled by M365_SUMMARY_BATCH_CONCURRENCY (default 3). Max batch size controlled by M365_SUMMARY_BATCH_MAX_SIZE (default 10).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email_ids": {"type": "array", "items": {"type": "string"}, "description": "List of email IDs to summarize"},
+                    "schema_name": {"type": "string", "default": "general", "description": "Schema name for the summary prompt. Fixed files in schema/; current names: general, newsletter."},
+                },
+                "required": ["email_ids"],
+            },
+        },
+        handler=get_summary_batch_wrapper,
         is_async=True,
     )
     ctx.register_tool(

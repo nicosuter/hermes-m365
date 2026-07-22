@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportMissingParameterType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownVariableType=false, reportUnusedCallResult=false, reportArgumentType=false, reportIndexIssue=false
+# pyright: reportMissingImports=false, reportMissingParameterType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownVariableType=false, reportUnusedCallResult=false, reportArgumentType=false, reportIndexIssue=false, reportGeneralTypeIssues=false
 
 import base64
 import importlib
@@ -1353,3 +1353,200 @@ def test_normalize_summary_response_non_dict_data_fails():
     )
     assert result["error"] == "SUMMARY_INVALID_RESPONSE"
     assert "non-JSON" in str(result.get("message", ""))
+
+
+# ---------------------------------------------------------------------------
+# get_summaries_batch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_summaries_batch_basic_success(monkeypatch: pytest.MonkeyPatch):
+    """Batch summarizes multiple emails and aggregates results."""
+    import mail_tools as mt_mod
+
+    call_count = 0
+
+    async def fake_get_summary(*, ctx, config, client, email_id, schema_name="general"):
+        nonlocal call_count
+        call_count += 1
+        return {"summary": f"Summary for {email_id}"}
+
+    monkeypatch.setattr(mt_mod, "get_summary", fake_get_summary)
+
+    cfg = MailConfig(
+        client_id="c", client_secret="s", tenant_id="t",
+        mailbox_user="u@example.org", summary_batch_max_size=10, summary_batch_concurrency=3,
+    )
+
+    result = await mt_mod.get_summaries_batch(
+        ctx=None, config=cfg, client=None,
+        email_ids=["msg-a", "msg-b", "msg-c"],
+    )
+
+    assert call_count == 3
+    assert result["total"] == 3
+    assert result["success"] == 3
+    assert result["failed"] == 0
+    assert len(result["summaries"]) == 3
+    for entry in result["summaries"]:  # pyright: ignore[reportUnknownVariableType]
+        assert entry["emailId"] in ("msg-a", "msg-b", "msg-c")
+        assert entry["summary"] is not None
+
+
+@pytest.mark.asyncio
+async def test_get_summaries_batch_empty_list(monkeypatch: pytest.MonkeyPatch):
+    """Empty list returns empty summaries with zero counts."""
+    import mail_tools as mt_mod
+
+    call_count = 0
+
+    async def fake_get_summary(*, ctx, config, client, email_id, schema_name="general"):
+        nonlocal call_count
+        call_count += 1
+        return {"summary": "ok"}
+
+    monkeypatch.setattr(mt_mod, "get_summary", fake_get_summary)
+
+    cfg = MailConfig(
+        client_id="c", client_secret="s", tenant_id="t",
+        mailbox_user="u@example.org",
+    )
+
+    result = await mt_mod.get_summaries_batch(
+        ctx=None, config=cfg, client=None, email_ids=[],
+    )
+
+    assert call_count == 0
+    assert result == {"summaries": [], "total": 0, "success": 0, "failed": 0}
+
+
+@pytest.mark.asyncio
+async def test_get_summaries_batch_exceeds_max_size(monkeypatch: pytest.MonkeyPatch):
+    """Returns BATCH_TOO_LARGE error when list exceeds max size."""
+    import mail_tools as mt_mod
+
+    call_count = 0
+
+    async def fake_get_summary(*, ctx, config, client, email_id, schema_name="general"):
+        nonlocal call_count
+        call_count += 1
+        return {"summary": "ok"}
+
+    monkeypatch.setattr(mt_mod, "get_summary", fake_get_summary)
+
+    cfg = MailConfig(
+        client_id="c", client_secret="s", tenant_id="t",
+        mailbox_user="u@example.org", summary_batch_max_size=3,
+    )
+
+    result = await mt_mod.get_summaries_batch(
+        ctx=None, config=cfg, client=None,
+        email_ids=["a", "b", "c", "d"],
+    )
+
+    assert call_count == 0
+    assert result["error"] == "BATCH_TOO_LARGE"
+    assert result["maxSize"] == 3
+    assert result["requested"] == 4
+
+
+@pytest.mark.asyncio
+async def test_get_summaries_batch_deduplicates(monkeypatch: pytest.MonkeyPatch):
+    """Duplicate email IDs are deduplicated before processing."""
+    import mail_tools as mt_mod
+
+    called_ids = []
+
+    async def fake_get_summary(*, ctx, config, client, email_id, schema_name="general"):
+        called_ids.append(email_id)
+        return {"summary": f"Summary for {email_id}"}
+
+    monkeypatch.setattr(mt_mod, "get_summary", fake_get_summary)
+
+    cfg = MailConfig(
+        client_id="c", client_secret="s", tenant_id="t",
+        mailbox_user="u@example.org", summary_batch_max_size=10,
+    )
+
+    result = await mt_mod.get_summaries_batch(
+        ctx=None, config=cfg, client=None,
+        email_ids=["msg-a", "msg-b", "msg-a", "msg-c", "msg-b"],
+    )
+
+    assert len(called_ids) == 3  # only unique IDs
+    assert result["total"] == 3
+    assert result["success"] == 3
+    assert result["failed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_summaries_batch_mixed_success_failure(monkeypatch: pytest.MonkeyPatch):
+    """Aggregates success and failure counts correctly."""
+    import mail_tools as mt_mod
+
+    async def fake_get_summary(*, ctx, config, client, email_id, schema_name="general"):
+        if email_id == "msg-bad":
+            raise RuntimeError("LLM timeout")
+        return {"summary": f"Summary for {email_id}"}
+
+    monkeypatch.setattr(mt_mod, "get_summary", fake_get_summary)
+
+    cfg = MailConfig(
+        client_id="c", client_secret="s", tenant_id="t",
+        mailbox_user="u@example.org", summary_batch_max_size=10,
+    )
+
+    result = await mt_mod.get_summaries_batch(
+        ctx=None, config=cfg, client=None,
+        email_ids=["msg-ok", "msg-bad", "msg-ok2"],
+    )
+
+    assert result["total"] == 3
+    assert result["success"] == 2
+    assert result["failed"] == 1
+    for entry in result["summaries"]:
+        if entry["emailId"] == "msg-bad":
+            assert entry["error"] == "SUMMARY_EXCEPTION"
+        else:
+            assert "summary" in entry
+
+
+@pytest.mark.asyncio
+async def test_get_summaries_batch_respects_concurrency(monkeypatch: pytest.MonkeyPatch):
+    """Concurrency is limited by semaphore, not all at once."""
+    import mail_tools as mt_mod
+    import asyncio
+
+    max_concurrent = 0
+    current = 0
+    lock = asyncio.Lock()
+
+    async def fake_get_summary(*, ctx, config, client, email_id, schema_name="global"):
+        nonlocal current, max_concurrent
+        async with lock:
+            current += 1
+            if current > max_concurrent:
+                max_concurrent = current
+        await asyncio.sleep(0.05)  # simulate work
+        async with lock:
+            current -= 1
+        return {"summary": f"Summary for {email_id}"}
+
+    monkeypatch.setattr(mt_mod, "get_summary", fake_get_summary)
+
+    cfg = MailConfig(
+        client_id="c", client_secret="s", tenant_id="t",
+        mailbox_user="u@example.org",
+        summary_batch_max_size=10,
+        summary_batch_concurrency=2,
+    )
+
+    result = await mt_mod.get_summaries_batch(
+        ctx=None, config=cfg, client=None,
+        email_ids=["m1", "m2", "m3", "m4", "m5"],
+    )
+
+    assert max_concurrent <= 2, f"Expected max 2 concurrent, got {max_concurrent}"
+    assert result["total"] == 5
+    assert result["success"] == 5

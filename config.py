@@ -47,6 +47,9 @@ class MailConfig:
     summary_model: str | None = None
     summary_provider: str | None = None
     summary_timeout: float = 120.0
+    summary_batch_concurrency: int = 3
+    summary_batch_max_size: int = 10
+    summary_batch_concurrency: int = 3
 
     @classmethod
     def from_env(cls, *, load_dotenv: bool = True, project_root: Path | None = None) -> "MailConfig":
@@ -89,6 +92,16 @@ class MailConfig:
                 "M365_SUMMARY_TIMEOUT",
                 120.0,
             ),
+            summary_batch_max_size=parse_positive_int(
+                env,
+                "M365_SUMMARY_BATCH_MAX_SIZE",
+                10,
+            ),
+            summary_batch_concurrency=parse_positive_int(
+                env,
+                "M365_SUMMARY_BATCH_CONCURRENCY",
+                3,
+            ),
         )
 
 
@@ -115,6 +128,22 @@ def get_summary_timeout(config: MailConfig) -> float:
     too short for email summarization of large bodies.
     """
     return config.summary_timeout
+
+
+def get_summary_batch_max_size(config: MailConfig) -> int:
+    """Return the maximum number of email IDs allowed in a batch summary request.
+
+    Defaults to 10. Controlled by M365_SUMMARY_BATCH_MAX_SIZE.
+    """
+    return config.summary_batch_max_size
+
+
+def get_summary_batch_concurrency(config: MailConfig) -> int:
+    """Return the concurrency limit for parallel LLM calls in batch summaries.
+
+    Defaults to 3. Controlled by M365_SUMMARY_BATCH_CONCURRENCY.
+    """
+    return config.summary_batch_concurrency
 
 
 def project_root_from_module() -> Path:
