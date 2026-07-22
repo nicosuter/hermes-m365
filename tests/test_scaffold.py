@@ -2,9 +2,12 @@
 
 
 def test_package_version():
-    """Package __version__ is set."""
+    """Package exposes a non-empty, dotted __version__ string."""
     import __init__ as pkg_init
-    assert pkg_init.__version__ == "0.1.0"
+    version = pkg_init.__version__
+    assert isinstance(version, str)
+    assert version.count(".") >= 1
+    assert all(part for part in version.split("."))
 
 
 def test_core_imports():

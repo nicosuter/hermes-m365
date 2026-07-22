@@ -27,3 +27,6 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# importlib import mode keeps the suite runnable under pytest 8/9: the default
+# "prepend" mode collides with conftest.py resetting sys.modules["tests"].
+addopts = "--import-mode=importlib"

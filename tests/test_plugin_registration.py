@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import pytest
 
 
 from typing import Callable
@@ -21,7 +20,7 @@ class FakeContext:
         self.tools: list[tuple[str, object, str]] = []
         self.tool_schemas: dict[str, dict[str, object]] = {}
         self.tool_kwargs: dict[str, dict[str, object]] = {}
-        self._tool_call_kwargs: dict[str, bool] = {}  # tracks if handler= was used as keyword
+        self.tool_handlers: dict[str, Callable[..., object]] = {}
 
     def register_platform(self, **kwargs: object) -> None:
         self.platform_kwargs = kwargs
@@ -30,7 +29,8 @@ class FakeContext:
         description = schema.get("description", "")
         self.tools.append((name, handler, description if isinstance(description, str) else ""))
         self.tool_schemas[name] = schema
-        self.tool_kwargs[name] = {"has_handler_kw": True, **kwargs}
+        self.tool_handlers[name] = handler
+        self.tool_kwargs[name] = dict(kwargs)
 
 
 # ── Plugin YAML tests ──────────────────────────────────────────────────────
@@ -90,15 +90,13 @@ class TestAdapterRegistration:
         assert tool_names == expected
 
     def test_get_summary_registered_with_handler(self) -> None:
-        from adapter import register
+        from adapter import register, get_summary_wrapper
 
         ctx = FakeContext()
         register(ctx)
-        tool_names = {name for name, _, _ in ctx.tools}
-        assert "get_summary" in tool_names
-        kwargs = ctx.tool_kwargs.get("get_summary", {})
-        assert kwargs.get("has_handler_kw") is True, "handler= must be passed as a keyword argument to register_tool()"
-        assert kwargs.get("is_async") is True
+        # The registered handler must be the actual wrapper, registered as async.
+        assert ctx.tool_handlers.get("get_summary") is get_summary_wrapper
+        assert ctx.tool_kwargs.get("get_summary", {}).get("is_async") is True
 
     def test_get_email_description_mentions_summary(self) -> None:
         from adapter import register
@@ -296,7 +294,6 @@ class TestHermesContract:
 
     def test_adapter_has_base_class_lifecycle_methods(self) -> None:
         from adapter import M365EmailAdapter
-        from gateway.platforms.base import BasePlatformAdapter
 
         adapter = M365EmailAdapter()
         assert hasattr(adapter, "_mark_connected")

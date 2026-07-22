@@ -11,7 +11,7 @@ import respx
 
 from config import MailConfig
 from graph import GRAPH_BASE_URL, GraphClient
-from mail_tools import _build_odata_filter, _encode_email_id, _get_message_metadata, _trusted_sender_address, get_attachment, get_email, get_summary, list_mail, normalize_summary_response, send_email
+from mail_tools import _build_odata_filter, _encode_email_id, _trusted_sender_address, get_attachment, get_email, get_summary, list_mail, normalize_summary_response, send_email
 
 
 @pytest.fixture
@@ -91,15 +91,47 @@ def test_build_odata_filter_from_address_escapes_quotes():
     assert _build_odata_filter(from_address="user'o@domain.com") == "from/emailAddress/address eq 'user''o@domain.com'"
 
 
-def test_build_odata_filter_subject_contains():
-    assert _build_odata_filter(subject_contains="invoice") == "contains(subject, 'invoice')"
+def test_build_odata_filter_excludes_subject():
+    """Subject is filtered client-side; Graph rejects contains(subject, ...) with 400."""
+    from mail_tools import _build_odata_filter as bf
+
+    with pytest.raises(TypeError):
+        bf(subject_contains="invoice")  # type: ignore[call-arg]
 
 
-def test_build_odata_filter_date_range():
+def test_build_odata_filter_date_range_uses_unquoted_datetime():
+    """DateTimeOffset literals must be unquoted or Graph returns HTTP 400."""
     result = _build_odata_filter(date_after="2024-01-01T00:00:00Z", date_before="2024-12-31T23:59:59Z")
     assert result is not None
-    assert "receivedDateTime gt '2024-01-01T00:00:00Z'" in result
-    assert "receivedDateTime lt '2024-12-31T23:59:59Z'" in result
+    assert "receivedDateTime gt 2024-01-01T00:00:00Z" in result
+    assert "receivedDateTime lt 2024-12-31T23:59:59Z" in result
+    # No single quotes around datetime literals.
+    assert "gt '2024" not in result
+    assert "lt '2024" not in result
+
+
+def test_normalize_graph_datetime_variants():
+    from mail_tools import _normalize_graph_datetime as norm
+
+    assert norm("2024-01-01T00:00:00Z") == "2024-01-01T00:00:00Z"
+    assert norm("2024-01-01") == "2024-01-01T00:00:00Z"  # date-only expands to midnight UTC
+    assert norm("2024-06-01T12:30:00+02:00") == "2024-06-01T10:30:00Z"  # tz converted to UTC
+    with pytest.raises(ValueError):
+        norm("last tuesday")
+    with pytest.raises(ValueError):
+        norm("")
+
+
+def test_coerce_top_clamps_range():
+    from mail_tools import _coerce_top
+
+    assert _coerce_top(25) == 25
+    assert _coerce_top(0) == 1
+    assert _coerce_top(-5) == 1
+    assert _coerce_top(5000) == 1000
+    assert _coerce_top("10") == 10
+    assert _coerce_top("garbage") == 25
+    assert _coerce_top(None) == 25
 
 
 def test_build_odata_filter_has_attachments():
@@ -111,13 +143,13 @@ def test_build_odata_filter_combined():
     result = _build_odata_filter(
         unreadOnly=True,
         from_address="boss@co.com",
-        subject_contains="urgent",
+        date_after="2024-01-01T00:00:00Z",
         has_attachments=True,
     )
     assert result is not None
     assert "isRead eq false" in result
     assert "from/emailAddress/address eq 'boss@co.com'" in result
-    assert "contains(subject, 'urgent')" in result
+    assert "receivedDateTime gt 2024-01-01T00:00:00Z" in result
     assert "hasAttachments eq true" in result
     assert result.count(" and ") == 3
 
@@ -237,16 +269,35 @@ async def test_list_mail_unread_only_combines_with_from_filter(config: MailConfi
 @pytest.mark.asyncio
 @respx.mock
 async def test_list_mail_multiple_structured_filters(config: MailConfig):
-    """Structured filters combine correctly: unreadOnly + from + subjectContains + dateAfter + hasAttachments."""
+    """Server-side filters (unreadOnly + from + dateAfter + hasAttachments) use an
+    unquoted DateTimeOffset literal and omit subject; subject is filtered client-side."""
     mock_token()
     first_url = (
         f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages"
-        "?$top=10&$filter=isRead%20eq%20false%20and%20from%2FemailAddress%2Faddress%20eq%20'boss%40example.com'%20and%20contains(subject,%20%27invoice%27)%20and%20receivedDateTime%20gt%20%272024-01-01T00%3A00%3A00Z%27%20and%20hasAttachments%20eq%20true"
+        "?$top=10&$filter=isRead%20eq%20false%20and%20from%2FemailAddress%2Faddress%20eq%20'boss%40example.com'"
+        "%20and%20receivedDateTime%20gt%202024-01-01T00%3A00%3A00Z%20and%20hasAttachments%20eq%20true"
     )
     first_route = respx.get(first_url).mock(
         return_value=httpx.Response(
             200,
-            json={"value": []},
+            json={
+                "value": [
+                    {
+                        "id": "match",
+                        "subject": "Your INVOICE is ready",
+                        "from": {"emailAddress": {"address": "boss@example.com", "name": "Boss"}},
+                        "receivedDateTime": "2026-06-17T10:00:00Z",
+                        "hasAttachments": True,
+                    },
+                    {
+                        "id": "nomatch",
+                        "subject": "Lunch plans",
+                        "from": {"emailAddress": {"address": "boss@example.com", "name": "Boss"}},
+                        "receivedDateTime": "2026-06-17T11:00:00Z",
+                        "hasAttachments": True,
+                    },
+                ]
+            },
         )
     )
 
@@ -254,12 +305,47 @@ async def test_list_mail_multiple_structured_filters(config: MailConfig):
         result = await list_mail(
             config=config, client=client, unreadOnly=True, top=10,
             from_address="boss@example.com",
-            subject_contains="invoice",
+            subject_contains="invoice",  # case-insensitive, client-side
             date_after="2024-01-01T00:00:00Z",
             has_attachments=True,
         )
 
     assert first_route.called
+    # Only the message whose subject contains "invoice" (case-insensitive) is returned.
+    emails: list[dict[str, object]] = cast(list[dict[str, object]], result["emails"])
+    assert [e["subject"] for e in emails] == ["Your INVOICE is ready"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_list_mail_rejects_unparseable_date_without_calling_graph(config: MailConfig):
+    """An invalid dateAfter returns a structured error and never hits Graph (no 400)."""
+    mock_token()
+    graph_route = respx.get(
+        url__startswith=f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages"
+    ).mock(return_value=httpx.Response(200, json={"value": []}))
+
+    async with GraphClient(config) as client:
+        result = await list_mail(config=config, client=client, unreadOnly=False, date_after="last tuesday")
+
+    assert result["error"] == "INVALID_DATE_FILTER"
+    assert not graph_route.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_list_mail_clamps_out_of_range_top(config: MailConfig):
+    """top values outside Graph's 1..1000 range are clamped, avoiding a 400."""
+    mock_token()
+    route = respx.get(
+        f"{GRAPH_BASE_URL}/users/user%40example.org/mailFolders/inbox/messages"
+        "?$top=1000&$orderby=receivedDateTime%20desc"
+    ).mock(return_value=httpx.Response(200, json={"value": []}))
+
+    async with GraphClient(config) as client:
+        result = await list_mail(config=config, client=client, unreadOnly=False, top=99999)
+
+    assert route.called
     assert result == {"emails": []}
 
 

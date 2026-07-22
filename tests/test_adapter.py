@@ -3,17 +3,15 @@
 """Tests for M365 Email adapter lifecycle, polling, send, and state."""
 
 import asyncio
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import httpx
 import pytest
 import respx
 
-from config import MailConfig
-from graph import GRAPH_BASE_URL, GraphClient
+from graph import GRAPH_BASE_URL
 from mail_tools import _encode_email_id
 from state import PollState
 
@@ -95,27 +93,30 @@ def test_state_max_ids():
 # ── Adapter Lifecycle Tests ───────────────────────────────────────────────
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(reason="send() is intentionally a stub; agent must use explicit email tools (send_email, reply_email, etc.)", strict=True)
 @respx.mock
-async def test_send_defaults_subject_when_no_metadata(env, state_path):
+async def test_send_suppresses_output_even_when_connected(env, state_path):
+    """send() is a deliberate no-op: the gateway calls it for every streaming
+    delta, so it must never hit Graph — even while connected — to avoid flooding
+    recipients. The agent sends via the explicit email tools instead.
+    """
     _mock_token()
     env.setenv("M365_EMAIL_STATE_PATH", str(state_path))
 
     from adapter import M365EmailAdapter
 
-    adapter = M365EmailAdapter()
-    await adapter.connect()
-
     send_route = respx.post(_mail_url("sendMail")).mock(
         return_value=httpx.Response(202, json={})
     )
 
-    await adapter.send("m365:test@example.com", "plain body")
+    adapter = M365EmailAdapter()
+    await adapter.connect()
+    try:
+        result = await adapter.send("m365:test@example.com", "plain body")
+    finally:
+        await adapter.disconnect()
 
-    payload = json.loads(send_route.calls.last.request.read().decode())
-    assert payload["message"]["subject"] == "Message from Hermes"
-
-    await adapter.disconnect()
+    assert result.success is False
+    assert not send_route.called
 
 
 @pytest.mark.asyncio
@@ -196,6 +197,7 @@ async def test_polling_does_not_mark_mail_read(env, state_path):
     await asyncio.sleep(0.3)
     await adapter.disconnect()
 
+    assert inbox_route.called
     assert len(tracker_calls) == 1
     assert not mark_read_route.called
 
@@ -282,7 +284,6 @@ def test_check_requirements_returns_true_when_env_set(env):
 
 def test_check_requirements_returns_false_when_env_missing(monkeypatch):
     """check_requirements() must fail when required env vars are absent."""
-    import os
     monkeypatch.delenv("M365_MAIL_CLIENT_ID", raising=False)
     monkeypatch.delenv("M365_MAIL_CLIENT_SECRET", raising=False)
     monkeypatch.delenv("M365_MAIL_TENANT_ID", raising=False)

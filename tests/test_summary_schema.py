@@ -3,7 +3,6 @@
 # pyright: reportMissingParameterType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnusedCallResult=false
 
 import json
-from pathlib import Path
 
 import pytest
 

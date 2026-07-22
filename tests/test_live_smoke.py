@@ -13,6 +13,8 @@ REQUIRED_LIVE_ENV = (
     "M365_MAIL_CLIENT_ID",
     "M365_MAIL_CLIENT_SECRET",
     "M365_MAIL_TENANT_ID",
+    "M365_MAILBOX_USER",
+    "EMAIL_ALLOWED_USERS",
 )
 
 
@@ -35,6 +37,10 @@ async def test_live_list_mail_smoke_returns_collection() -> None:
     config = MailConfig.from_env(load_dotenv=False)
 
     async with GraphClient(config) as client:
-        messages = await list_mail(config=config, client=client, top=1)
+        result = await list_mail(config=config, client=client, top=1)
 
-    assert isinstance(messages, list)
+    # list_mail returns {"emails": [...]} — the previous assertion checked for a
+    # bare list and would have failed against real Graph.
+    assert isinstance(result, dict)
+    assert isinstance(result["emails"], list)
+    assert len(result["emails"]) <= 1

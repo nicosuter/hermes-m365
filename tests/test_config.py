@@ -119,8 +119,10 @@ def test_summary_model_defaults_to_none(monkeypatch):
     assert get_summary_model(config) is None
 
 
-def test_summary_model_missing_does_not_break_from_env(monkeypatch):
+def test_summary_model_empty_string_is_treated_as_none(monkeypatch):
+    """An empty M365_SUMMARY_MODEL must normalize to None, not the empty string."""
     set_required_env(monkeypatch)
+    monkeypatch.setenv("M365_SUMMARY_MODEL", "")
 
     config = MailConfig.from_env(load_dotenv=False)
 

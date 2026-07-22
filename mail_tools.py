@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import logging
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 from urllib.parse import quote
@@ -40,18 +41,71 @@ logger = logging.getLogger(__name__)
 UNTRUSTED_SENDER_WARNING = "UNTRUSTED_SENDER_NOT_IN_EMAIL_ALLOWED_USERS"
 
 
+GRAPH_TOP_MAX = 1000
+GRAPH_TOP_DEFAULT = 25
+
+
+def _coerce_top(top: object, *, default: int = GRAPH_TOP_DEFAULT) -> int:
+    """Clamp a caller-supplied ``top`` into Graph's valid 1..1000 $top range.
+
+    Graph rejects $top values outside 1..1000 with HTTP 400, and tool callers
+    (LLMs) may pass strings, floats, or nonsense. Clamp/coerce rather than let
+    the request fail.
+    """
+    try:
+        value = int(top)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    if value < 1:
+        return 1
+    if value > GRAPH_TOP_MAX:
+        return GRAPH_TOP_MAX
+    return value
+
+
+def _normalize_graph_datetime(value: str) -> str:
+    """Normalize an ISO-8601 date/datetime into a Graph OData DateTimeOffset literal.
+
+    Graph expects an *unquoted* Edm.DateTimeOffset literal (e.g.
+    ``2024-01-01T00:00:00Z``). Wrapping it in single quotes makes Graph treat it
+    as Edm.String and reject the filter with HTTP 400 ("A binary operator with
+    incompatible types ... 'Edm.DateTimeOffset' and 'Edm.String'"). A non-ISO
+    string is likewise rejected. Raises ValueError for anything unparseable.
+    """
+    raw = value.strip()
+    if not raw:
+        raise ValueError("date filter must not be empty")
+    # datetime.fromisoformat accepts 'Z' only on 3.11+; normalize defensively.
+    candidate = raw[:-1] + "+00:00" if raw[-1:] in ("Z", "z") else raw
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid date filter {value!r}: expected ISO 8601 (e.g. 2024-01-01T00:00:00Z)"
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    parsed = parsed.astimezone(timezone.utc)
+    return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _build_odata_filter(
     *,
     unreadOnly: bool = False,
     from_address: str | None = None,
-    subject_contains: str | None = None,
     date_after: str | None = None,
     date_before: str | None = None,
     has_attachments: bool | None = None,
 ) -> str | None:
-    """Build an OData $filter expression from structured filter parameters.
+    """Build a Graph-supported OData $filter from structured parameters.
 
-    Returns None if no filters are specified, otherwise a valid OData expression.
+    Only predicates Graph supports on the Message resource are emitted. Subject
+    matching is intentionally excluded — Graph rejects ``contains(subject, ...)``
+    with HTTP 400, so subject filtering is applied client-side by list_mail.
+
+    DateTime literals are emitted *unquoted*; callers must pass values already
+    normalized via ``_normalize_graph_datetime``. Returns None when no filters
+    are specified.
     """
     parts: list[str] = []
 
@@ -61,13 +115,10 @@ def _build_odata_filter(
         # Escape single quotes in email addresses (unlikely but safe)
         escaped = from_address.replace("'", "''")
         parts.append(f"from/emailAddress/address eq '{escaped}'")
-    if subject_contains:
-        escaped = subject_contains.replace("'", "''")
-        parts.append(f"contains(subject, '{escaped}')")
     if date_after:
-        parts.append(f"receivedDateTime gt '{date_after}'")
+        parts.append(f"receivedDateTime gt {date_after}")
     if date_before:
-        parts.append(f"receivedDateTime lt '{date_before}'")
+        parts.append(f"receivedDateTime lt {date_before}")
     if has_attachments is not None:
         parts.append(f"hasAttachments eq {'true' if has_attachments else 'false'}")
 
@@ -107,20 +158,30 @@ async def list_mail(
     has_attachments: bool | None = None,
 ) -> dict[str, object]:
     _ = config
+    top = _coerce_top(top)
+
+    # Normalize date filters to unquoted Graph DateTimeOffset literals, rejecting
+    # unparseable input up front rather than letting Graph return an opaque 400.
+    try:
+        normalized_after = _normalize_graph_datetime(date_after) if date_after else None
+        normalized_before = _normalize_graph_datetime(date_before) if date_before else None
+    except ValueError as exc:
+        return {"error": "INVALID_DATE_FILTER", "message": str(exc)}
+
     odata_filter = _build_odata_filter(
         unreadOnly=unreadOnly,
         from_address=from_address,
-        subject_contains=subject_contains,
-        date_after=date_after,
-        date_before=date_before,
+        date_after=normalized_after,
+        date_before=normalized_before,
         has_attachments=has_attachments,
     )
-    # Microsoft Graph rejects combining $orderby with $filter that uses contains()/startswith().
-    # When a filter is present, skip $orderby — Graph returns results in receivedDateTime order
-    # by default anyway.
-    query_parts = [f"$top={int(top)}"]
+    # Microsoft Graph rejects $orderby combined with a $filter on a different
+    # property. When a filter is present, skip $orderby — Graph returns messages
+    # in receivedDateTime-desc order by default. Single quotes are kept literal
+    # in the encoded filter (Graph string literals); everything else is encoded.
+    query_parts = [f"$top={top}"]
     if odata_filter:
-        query_parts.append("$filter=" + quote(odata_filter, safe="':()=&<>+-_"))
+        query_parts.append("$filter=" + quote(odata_filter, safe="'"))
     else:
         query_parts.append("$orderby=receivedDateTime%20desc")
 
@@ -130,6 +191,13 @@ async def list_mail(
     raw_value = payload.get("value", [])
     value: list[object] = cast(list[object], raw_value) if isinstance(raw_value, list) else []
     summaries = [_message_summary(cast(dict[str, object], item)) for item in value if isinstance(item, dict)]
+
+    # Subject filtering is applied client-side: Graph rejects contains(subject, ...)
+    # with HTTP 400, and $search cannot be combined with $filter/$orderby.
+    if subject_contains:
+        needle = subject_contains.casefold()
+        summaries = [s for s in summaries if needle in _string_value(s.get("subject")).casefold()]
+
     return {"emails": summaries[:top]}
 
 

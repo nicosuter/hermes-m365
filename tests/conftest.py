@@ -82,15 +82,7 @@ sys.modules["gateway.platforms"] = _gateway.platforms
 sys.modules["gateway.platforms.base"] = _gateway.platforms.base
 sys.modules["gateway.config"] = _gateway.config
 
-# Also remove stale cached __init__ module if it exists
-if "tests" in sys.modules:
-    del sys.modules["tests"]
-if "tests.__init__" in sys.modules:
-    del sys.modules["tests.__init__"]
-
-import importlib
-
-import pytest
+import pytest  # noqa: E402  (must follow the gateway sys.modules injection above)
 
 
 @pytest.fixture
