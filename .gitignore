@@ -1,5 +1,7 @@
 .env
 .env.local
+.omc/
+.omc/plans/
 .omo/
 .runtime/
 __pycache__/
