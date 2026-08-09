@@ -81,6 +81,12 @@ Current available schemas: `general`, `newsletter`. Raw reference files (`schema
 
 Schemas are enforced via the API's structured output parameter — they are strict schema constraints, not system-prompt suggestions.
 
+> [!IMPORTANT]
+> This requires Hermes Agent core support for the `strict` keyword on
+> `ctx.llm.complete_structured()` / `ctx.llm.acomplete_structured()`. See
+> [Hermes Agent core compatibility](docs/HERMES_CORE_COMPATIBILITY.md) for the
+> required source-level API change.
+
 ### Error Responses
 
 | Error | Description |
