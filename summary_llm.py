@@ -76,6 +76,7 @@ async def summarize_with_llm(
             input=[{"type": "text", "text": payload_json}],
             json_schema=schema,
             json_mode=use_json_mode,
+            strict=True,
             system_prompt=effective_prompt,
             **call_kwargs,
         )
