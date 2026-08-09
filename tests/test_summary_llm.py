@@ -241,6 +241,7 @@ async def test_instructions_and_payload_passed():
     assert "Meeting notes" in input_blocks[0]["text"]
     assert mock_ctx._last_system_prompt == "You are a summarizer."
     assert mock_ctx._last_purpose == "email.summarize"
+    assert mock_ctx._last_strict is True
 
 
 async def test_trusted_sender_uses_trusted_prompt():
@@ -301,6 +302,7 @@ class _FakeLlm:
         provider: str | None = None,
         purpose: str | None = None,
         json_mode: bool = False,
+        strict: bool = False,
         **kwargs: Any,
     ) -> _FakeStructuredResult:
         self._ctx._last_instructions = instructions
@@ -311,6 +313,7 @@ class _FakeLlm:
         self._ctx._last_provider = provider
         self._ctx._last_purpose = purpose
         self._ctx._last_json_mode = json_mode
+        self._ctx._last_strict = strict
         self._call_count += 1
 
         if self._ctx._exc:
@@ -332,4 +335,5 @@ class _FakeCtx:
         self._last_provider: str | None = None
         self._last_purpose: str | None = None
         self._last_json_mode: bool = False
+        self._last_strict: bool = False
         self.llm = _FakeLlm(self)
